@@ -204,6 +204,8 @@ struct ApplySheet: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    /// Recipe groups are collapsible; open by default for discoverability.
+    @State private var expandedGroups: Set<JobPhase> = Set(JobPhase.allCases)
 
     var body: some View {
         List(selection: phaseSelection) {
@@ -219,26 +221,45 @@ struct SidebarView: View {
                     .help("Approve job PRs, then merge scripts act on this job's artifacts only")
             }
 
-            // Recipes grouped by the phase they belong to, so it's clear
-            // which ones apply where.
-            ForEach(JobPhase.allCases, id: \.self) { phase in
-                let recipes = RecipeCatalog.all.filter { $0.phase == phase }
-                if !recipes.isEmpty {
-                    Section("\(phase.rawValue.capitalized) recipes") {
-                        ForEach(recipes) { recipe in
-                            Button {
-                                model.loadRecipe(recipe)
-                            } label: {
-                                Label(recipe.title, systemImage: recipe.systemImage)
+            // The recipe LIBRARY is reference material, not navigation: it
+            // lives under its own header, one collapsible group per phase,
+            // with quieter styling so it doesn't compete with the workflow.
+            Section("Recipe library") {
+                ForEach(JobPhase.allCases, id: \.self) { phase in
+                    let recipes = RecipeCatalog.all.filter { $0.phase == phase }
+                    if !recipes.isEmpty {
+                        DisclosureGroup(isExpanded: expansionBinding(for: phase)) {
+                            ForEach(recipes) { recipe in
+                                Button {
+                                    model.loadRecipe(recipe)
+                                } label: {
+                                    Label(recipe.title, systemImage: recipe.systemImage)
+                                        .font(.callout)
+                                }
+                                .buttonStyle(.plain)
+                                .selectionDisabled()
+                                .help(recipe.prompt)
                             }
-                            .buttonStyle(.plain)
-                            .help(recipe.prompt)
+                        } label: {
+                            Text(phase.rawValue.capitalized)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.secondary)
                         }
+                        .selectionDisabled()
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    private func expansionBinding(for phase: JobPhase) -> Binding<Bool> {
+        Binding(
+            get: { expandedGroups.contains(phase) },
+            set: { isOpen in
+                if isOpen { expandedGroups.insert(phase) } else { expandedGroups.remove(phase) }
+            }
+        )
     }
 
     private var phaseSelection: Binding<JobPhase?> {
