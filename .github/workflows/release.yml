@@ -1,0 +1,53 @@
+# Release skeleton (plan v2 — Release Workflow). Builds and uploads an
+# UNSIGNED app artifact. Developer ID signing + notarization are stubbed below
+# and require the listed secrets before they can be enabled. Never commit
+# credentials.
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test
+
+      - name: Generate icon
+        run: swift Scripts/generate_icon.swift
+
+      - name: Build app bundle
+        run: VERSION="${GITHUB_REF_NAME#v}" ./Scripts/make_app.sh release
+
+      # --- Developer ID signing + notarization (enable when secrets exist) ---
+      # Required secrets:
+      #   APPLE_TEAM_ID
+      #   SIGNING_CERTIFICATE_P12_BASE64 / SIGNING_CERTIFICATE_PASSWORD
+      #   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID / APP_STORE_CONNECT_PRIVATE_KEY
+      #
+      # - name: Import signing certificate
+      #   run: |
+      #     echo "$SIGNING_CERTIFICATE_P12_BASE64" | base64 --decode > cert.p12
+      #     security create-keychain -p ci build.keychain
+      #     security import cert.p12 -k build.keychain -P "$SIGNING_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+      # - name: Sign
+      #   run: codesign --force --options runtime --sign "Developer ID Application: … ($APPLE_TEAM_ID)" dist/BulkGitHub.app
+      # - name: Notarize and staple
+      #   run: |
+      #     ditto -c -k --keepParent dist/BulkGitHub.app dist/BulkGitHub.zip
+      #     xcrun notarytool submit dist/BulkGitHub.zip --key-id "$APP_STORE_CONNECT_KEY_ID" … --wait
+      #     xcrun stapler staple dist/BulkGitHub.app
+
+      - name: Package
+        run: ditto -c -k --keepParent dist/BulkGitHub.app dist/BulkGitHub.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BulkGitHub
+          path: dist/BulkGitHub.zip
