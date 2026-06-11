@@ -7,7 +7,9 @@ type-checks the script, shows it for review, and executes it in a sandboxed
 JavaScriptCore context wired to capability handles (check scripts get a
 read-only handle — the write surface does not exist on it).
 
-![The BulkGitHub workbench: prompt, generated script, per-repo results, and evidence](Screenshot.png)
+![Check phase: prompt, generated script, per-repo results, and verified evidence in situ](screenshot-check.jpeg)
+
+![Update phase (dry run): the check → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.jpeg)
 
 - Architecture and roadmap: [plans/native-macos-bulkgithub-app-plan-v2.md](plans/native-macos-bulkgithub-app-plan-v2.md)
 - Runtime decision record: [decisions/0001-javascriptcore-as-embedded-script-runtime.md](decisions/0001-javascriptcore-as-embedded-script-runtime.md)
