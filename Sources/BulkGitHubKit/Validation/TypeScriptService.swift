@@ -43,9 +43,14 @@ public final class TypeScriptService: @unchecked Sendable {
     }
 
     private static let glue = """
-    globalThis.__bgh_check = (fileName, source) => {
+    globalThis.__bgh_check = (fileName, source, extraName, extraSource) => {
       const files = Object.assign({}, globalThis.__bgh_files);
       files[fileName] = source;
+      const roots = [fileName, "bulkgh.d.ts"];
+      if (extraName && extraSource) {
+        files[extraName] = extraSource;
+        roots.push(extraName);
+      }
       const options = {
         target: ts.ScriptTarget.ES2020,
         lib: ["lib.es2022.d.ts"],
@@ -70,7 +75,7 @@ public final class TypeScriptService: @unchecked Sendable {
         useCaseSensitiveFileNames: () => true,
         getNewLine: () => "\\n",
       };
-      const program = ts.createProgram([fileName, "bulkgh.d.ts"], options, host);
+      const program = ts.createProgram(roots, options, host);
       const diagnostics = ts.getPreEmitDiagnostics(program);
       return JSON.stringify(diagnostics.map((d) => {
         let line = 0, character = 0;
@@ -132,9 +137,11 @@ public final class TypeScriptService: @unchecked Sendable {
         let file: String?
     }
 
-    /// Type-checks a script against the host API. Returns diagnostics
-    /// (errors block execution; the caller decides).
-    public func check(source: String, fileName: String = "script.ts") throws -> [Diagnostic] {
+    /// Type-checks a script against the host API. Update scripts pass the
+    /// extra declaration so the write surface exists for them — and only for
+    /// them. Returns diagnostics (errors block execution; the caller decides).
+    public func check(source: String, fileName: String = "script.ts",
+                      extraDeclaration: String? = nil) throws -> [Diagnostic] {
         try queue.sync {
             let ctx = try ensureContext()
             var callError: String?
@@ -142,7 +149,9 @@ public final class TypeScriptService: @unchecked Sendable {
                 callError = exception?.toString() ?? "unknown exception"
             }
             guard let fn = ctx.objectForKeyedSubscript("__bgh_check"),
-                  let result = fn.call(withArguments: [fileName, source]),
+                  let result = fn.call(withArguments: [fileName, source,
+                                                       extraDeclaration == nil ? "" : "bulkgh.update.d.ts",
+                                                       extraDeclaration ?? ""]),
                   result.isString, let json = result.toString(),
                   let data = json.data(using: .utf8) else {
                 throw ServiceError.callFailed(callError ?? "check returned no result")

@@ -104,12 +104,24 @@ public enum PromptLibrary {
     11. To work across many files in a repository, use gh.listFiles with a \
     glob (one API call), then gh.getContent for the files that matter.
     12. If the request requires capabilities the host API does not provide — \
-    other endpoints, write operations, history/commits/issues, data the \
-    surface cannot reach — do NOT improvise workarounds or approximate the \
-    request with what exists. Report the gap instead (see response format): \
-    state what the request needs, which host capability is missing, and the \
-    closest task that IS achievable today, if any. A clear gap report is the \
-    correct, expected output in this situation, not a failure.
+    other endpoints, write operations beyond the declared surface, \
+    history/commits/issues, data the surface cannot reach — do NOT improvise \
+    workarounds or approximate the request with what exists. Report the gap \
+    instead (see response format): state what the request needs, which host \
+    capability is missing, and the closest task that IS achievable today, if \
+    any. A clear gap report is the correct, expected output in this \
+    situation, not a failure.
+    13. Update scripts (phase "update") run as DRY RUNS first: every gh write \
+    is recorded into a reviewable execution plan with synthesized responses. \
+    Write the script as if it executes for real — the same script later \
+    re-runs against a live handle unchanged.
+    14. Update scripts follow this shape per repo: gh.getRef on the default \
+    branch, one gh.createBranch (the name MUST start with "bulkgh/" — \
+    host-enforced), gh.putContent per changed file (always gh.getContent \
+    first so the plan can show a diff), then a single gh.createPR.
+    15. Compute new file contents with targeted line/string surgery that \
+    preserves the rest of the file byte-for-byte; never parse-and-reserialise \
+    whole files, which destroys formatting.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {

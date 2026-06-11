@@ -57,6 +57,8 @@ public enum RepoStatus: String, Codable, Sendable, CaseIterable {
     case verifiedMatch = "verified match"
     case skipped
     case failed
+    /// Dry-run update: write actions recorded for this repo, awaiting review.
+    case planned
     case alreadyUpToDate = "already up to date"
     case branchExists = "branch exists"
     case prExists = "PR exists"
@@ -131,6 +133,8 @@ public struct Job: Codable, Identifiable, Sendable {
     public var logs: [String]
     public var auditEvents: [AuditEvent]
     public var lastRunStatus: String?
+    /// Optional so pre-phase-3 saved state still decodes.
+    public var plannedActions: [String: [PlannedAction]]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {
@@ -183,6 +187,29 @@ public struct Diagnostic: Sendable, Hashable, Identifiable {
     }
 }
 
+// MARK: - Execution plans (dry-run updates)
+
+/// One recorded write from an update script's dry run. Nothing reaches
+/// GitHub in phase 3: the recording handle synthesizes plausible responses
+/// and accumulates these for native review.
+public enum PlannedAction: Codable, Hashable, Sendable {
+    case createBranch(name: String, fromSha: String)
+    case putContent(path: String, branch: String, message: String,
+                    before: String?, after: String)
+    case createPR(headRef: String, title: String, body: String)
+
+    public var summary: String {
+        switch self {
+        case .createBranch(let name, let sha):
+            return "Create branch \(name) from \(String(sha.prefix(12)))"
+        case .putContent(let path, let branch, _, let before, _):
+            return before == nil ? "Create \(path) on \(branch)" : "Update \(path) on \(branch)"
+        case .createPR(let head, let title, _):
+            return "Open PR \"\(title)\" from \(head)"
+        }
+    }
+}
+
 // MARK: - Engine run types
 
 public enum RunEvent: Sendable {
@@ -211,6 +238,8 @@ public struct RunOutcome: Sendable {
     public let results: [RepoResult]
     public let logs: [String]
     public let auditEvents: [AuditEvent]
+    /// Recorded write actions per repo fullName (update-phase dry runs).
+    public let plannedActions: [String: [PlannedAction]]
     public let duration: TimeInterval
 }
 

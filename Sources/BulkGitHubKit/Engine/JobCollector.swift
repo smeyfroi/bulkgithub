@@ -10,6 +10,8 @@ public final class JobCollector: @unchecked Sendable {
     private var resultsByRepo: [String: RepoResult] = [:]
     private var knownRepos: [String: RepoRef] = [:]
     private var receipts: Set<String> = []
+    private var fetchedContents: [String: String] = [:]
+    private var plannedActions: [String: [PlannedAction]] = [:]
     private var logs: [String] = []
     private var auditEvents: [AuditEvent] = []
     private var state: [String: Any] = [:]
@@ -63,14 +65,43 @@ public final class JobCollector: @unchecked Sendable {
 
     // MARK: Receipts (deterministic-verification rule)
 
-    public func recordReceipt(repo: String, path: String) {
+    public func recordReceipt(repo: String, path: String, content: String? = nil) {
         lock.lock(); defer { lock.unlock() }
         receipts.insert("\(repo)|\(path)")
+        if let content { fetchedContents["\(repo)|\(path)"] = content }
     }
 
     public func hasReceipt(repo: String, path: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return receipts.contains("\(repo)|\(path)")
+    }
+
+    /// The content a script fetched earlier in this run — the "before" side of
+    /// a planned edit's diff.
+    public func fetchedContent(repo: String, path: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return fetchedContents["\(repo)|\(path)"]
+    }
+
+    // MARK: Execution plan (recording handle, update dry runs)
+
+    public func recordAction(repo: String, _ action: PlannedAction) {
+        lock.lock()
+        plannedActions[repo, default: []].append(action)
+        let count = plannedActions[repo]?.count ?? 0
+        knownRepos[repo] = knownRepos[repo] ?? RepoRef(fullName: repo)
+        var result = resultsByRepo[repo] ?? RepoResult(repo: knownRepos[repo]!, status: .planned)
+        if resultsByRepo[repo] == nil { order.append(repo) }
+        result.status = .planned
+        result.reason = "\(count) action\(count == 1 ? "" : "s") planned"
+        resultsByRepo[repo] = result
+        lock.unlock()
+        onEvent(.repo(result))
+    }
+
+    public var snapshotPlan: [String: [PlannedAction]] {
+        lock.lock(); defer { lock.unlock() }
+        return plannedActions
     }
 
     // MARK: Logs, progress, audit

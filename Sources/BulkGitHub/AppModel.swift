@@ -13,6 +13,7 @@ final class AppModel {
     var results: [RepoResult] = []
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
+    var plannedActions: [String: [PlannedAction]] = [:]
     var statusLine: String = "Ready"
     var running = false
     var generating = false
@@ -37,6 +38,7 @@ final class AppModel {
                 results = job.results
                 logs = job.logs
                 auditEvents = job.auditEvents
+                plannedActions = job.plannedActions ?? [:]
                 statusLine = job.lastRunStatus ?? "Restored previous job"
             }
         }
@@ -183,6 +185,7 @@ final class AppModel {
         results = []
         logs = []
         auditEvents = []
+        plannedActions = [:]
         selectedRepo = nil
         statusLine = "Running…"
         let outcome = await engine.run(javaScript: validated.javaScript,
@@ -199,6 +202,7 @@ final class AppModel {
         results = outcome.results
         logs = outcome.logs
         auditEvents = outcome.auditEvents
+        plannedActions = outcome.plannedActions
         saveNow()
     }
 
@@ -233,6 +237,7 @@ final class AppModel {
         job.results = results
         job.logs = logs
         job.auditEvents = auditEvents
+        job.plannedActions = plannedActions
         job.lastRunStatus = statusLine
         try? store.save(AppStateSnapshot(settings: settings, job: job))
     }

@@ -56,7 +56,16 @@ public final class ValidationPipeline: @unchecked Sendable {
         var diagnostics = lint
         let javaScript: String
         if let typescript {
-            let typeDiagnostics = try typescript.check(source: source)
+            // The declared phase decides which API surface exists for the
+            // type-check: update scripts get the write declarations merged in;
+            // check scripts cannot even type-check a write. Sniffed from the
+            // source (meta extraction needs the transpiled JS, which we don't
+            // have yet); verified for real during meta extraction below.
+            let extraDeclaration = Self.sniffPhase(from: source) == .update
+                ? ResourceLocator.updateDeclaration
+                : nil
+            let typeDiagnostics = try typescript.check(source: source,
+                                                       extraDeclaration: extraDeclaration)
             diagnostics += typeDiagnostics
             if typeDiagnostics.contains(where: { $0.severity == .error }) {
                 throw ValidationError.typeErrors(diagnostics)
@@ -69,6 +78,14 @@ public final class ValidationPipeline: @unchecked Sendable {
 
         let meta = try Self.extractMeta(fromJavaScript: javaScript)
         return ValidatedScript(javaScript: javaScript, meta: meta, diagnostics: diagnostics)
+    }
+
+    static func sniffPhase(from source: String) -> JobPhase {
+        guard let regex = try? NSRegularExpression(pattern: #"phase\s*:\s*"(check|update|merge)""#),
+              let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+              let range = Range(match.range(at: 1), in: source),
+              let phase = JobPhase(rawValue: String(source[range])) else { return .check }
+        return phase
     }
 
     // MARK: - Meta extraction

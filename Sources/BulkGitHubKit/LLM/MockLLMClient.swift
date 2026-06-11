@@ -8,12 +8,32 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
     public init() {}
 
     public func makeScript(prompt: String, context: ScriptGenerationContext) async throws -> String {
-        // Crude routing between the bundled recipes: "contains" prompts go to
-        // the string scan, key/value prompts to the YAML check.
-        if prompt.range(of: "contains", options: .caseInsensitive) != nil {
+        // Crude routing between the bundled recipes: delete/remove-a-line
+        // prompts go to the dry-run update, "contains" prompts to the string
+        // scan, key/value prompts to the YAML check.
+        let lowered = prompt.lowercased()
+        if (lowered.contains("delete") || lowered.contains("remove")), lowered.contains("line") {
+            return try lineRemovalScript(for: prompt)
+        }
+        if lowered.contains("contains") {
             return try stringScanScript(for: prompt)
         }
         return try yamlKeyValueScript(for: prompt)
+    }
+
+    private func lineRemovalScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "remove_line_with_string") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let needle = firstMatch(in: prompt, pattern: #"`([^`]+)`"#)
+            ?? firstMatch(in: prompt, pattern: #""([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "needle", value: needle)
+        }
+        if let directory = firstMatch(in: prompt, pattern: #"files?\s+(?:in|under)\s+([\w./-]+)"#) {
+            let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
+            script = Self.replaceParam(in: script, name: "glob", value: "\(trimmed)/**")
+        }
+        return script
     }
 
     private func yamlKeyValueScript(for prompt: String) throws -> String {

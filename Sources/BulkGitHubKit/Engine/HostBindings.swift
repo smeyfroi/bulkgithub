@@ -108,7 +108,9 @@ enum HostBindings {
             return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
                 do {
                     let content = try await github.getContent(repo: fullName, path: path, ref: ref)
-                    if content != nil { collector.recordReceipt(repo: fullName, path: path) }
+                    if let content {
+                        collector.recordReceipt(repo: fullName, path: path, content: content)
+                    }
                     collector.audit(kind: "gh.getContent", repo: fullName,
                                     detail: path + (content == nil ? " (absent)" : " (\(content!.count) chars)"))
                     return content
@@ -181,10 +183,103 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(searchPRs, to: AnyObject.self),
                      forKeyedSubscript: "searchPRs" as NSString)
 
-        // Update/merge phases will install guarded write methods here (plan v2
-        // phases 3-5). Until then the write surface does not exist at all.
+        // Update phase: the RECORDING write surface. Nothing reaches GitHub —
+        // each call validates its arguments, records a PlannedAction, and
+        // returns a synthesized response so read-modify-write logic flows.
+        // Check-phase contexts never get these properties at all. Live guarded
+        // writes arrive with phase 4.
+        if phase == .update {
+            installRecordingWrites(on: gh, collector: collector,
+                                   limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+        }
 
         context.setObject(gh, forKeyedSubscript: "gh" as NSString)
+    }
+
+    private static func installRecordingWrites(on gh: JSValue, collector: JobCollector,
+                                               limiter: AsyncSemaphore, cancel: CancelBox,
+                                               vmQueue: DispatchQueue) {
+        let createBranch: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, nameValue, shaValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("createBranch: repo is required")
+            }
+            guard let name = stringArg(nameValue), let sha = stringArg(shaValue) else {
+                return rejectedPromise("createBranch: name and fromSha are required")
+            }
+            guard name.hasPrefix("bulkgh/") else {
+                return rejectedPromise(
+                    "createBranch: branch names must start with \"bulkgh/\" — job-prefixed branches are the only ones this app will ever create or delete (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                collector.recordAction(repo: fullName, .createBranch(name: name, fromSha: sha))
+                collector.audit(kind: "plan.createBranch", repo: fullName,
+                                detail: "\(name) from \(String(sha.prefix(12))) (dry-run)")
+                return ["sha": syntheticSha("\(fullName)#\(name)")]
+            }
+        }
+        gh.setObject(unsafeBitCast(createBranch, to: AnyObject.self),
+                     forKeyedSubscript: "createBranch" as NSString)
+
+        let putContent: @convention(block) (JSValue?, JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, pathValue, contentValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("putContent: repo is required")
+            }
+            guard let path = stringArg(pathValue), let content = stringArg(contentValue) else {
+                return rejectedPromise("putContent: path and content are required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let branch = stringArg(opts.objectForKeyedSubscript("branch")),
+                  let message = stringArg(opts.objectForKeyedSubscript("message")) else {
+                return rejectedPromise("putContent: opts { branch, message } are required")
+            }
+            guard branch.hasPrefix("bulkgh/") else {
+                return rejectedPromise("putContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let before = collector.fetchedContent(repo: fullName, path: path)
+                collector.recordAction(repo: fullName, .putContent(path: path, branch: branch,
+                                                                   message: message,
+                                                                   before: before, after: content))
+                collector.audit(kind: "plan.putContent", repo: fullName,
+                                detail: "\(path) on \(branch) (\(content.count) chars, dry-run)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(putContent, to: AnyObject.self),
+                     forKeyedSubscript: "putContent" as NSString)
+
+        let createPR: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("createPR: repo is required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let head = stringArg(opts.objectForKeyedSubscript("head")),
+                  let title = stringArg(opts.objectForKeyedSubscript("title")),
+                  let body = stringArg(opts.objectForKeyedSubscript("body")) else {
+                return rejectedPromise("createPR: opts { head, title, body } are required")
+            }
+            guard head.hasPrefix("bulkgh/") else {
+                return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                collector.recordAction(repo: fullName, .createPR(headRef: head, title: title, body: body))
+                collector.audit(kind: "plan.createPR", repo: fullName,
+                                detail: "\"\(title)\" from \(head) (dry-run)")
+                return PullRequestRef(repo: fullName, number: 0, headRef: head,
+                                      headSha: syntheticSha("\(fullName)#\(head)"),
+                                      state: "open", url: "(dry-run)").scriptValue
+            }
+        }
+        gh.setObject(unsafeBitCast(createPR, to: AnyObject.self),
+                     forKeyedSubscript: "createPR" as NSString)
+    }
+
+    /// Deterministic fake SHA for synthesized dry-run responses.
+    private static func syntheticSha(_ basis: String) -> String {
+        let hash = basis.unicodeScalars.reduce(into: UInt64(5381)) {
+            $0 = ($0 << 5) &+ $0 &+ UInt64($1.value)
+        }
+        return String(format: "%016llx%016llx", hash, ~hash)
     }
 
     // MARK: - job

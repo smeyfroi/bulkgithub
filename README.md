@@ -61,7 +61,23 @@ credentials are stored (Keychain only; scripts can never read them).
 - [x] Tests; CI + release workflow skeletons
 - [ ] Live GitHub/Anthropic exercised end-to-end (deliberately deferred)
 
-Later phases (dry-run updates, guarded writes, merge/cancel) are specified in
+## Phase 3 status (dry-run updates)
+
+- [x] Update-phase scripts with a **recording write surface**: createBranch /
+      putContent / createPR record `PlannedAction`s and return synthesized
+      responses — nothing reaches GitHub
+- [x] Phase-gated declarations: `bulkgh.update.d.ts` merges the write surface
+      in only for update scripts; a check script calling a write fails the
+      type-check (and the methods don't exist at runtime either)
+- [x] Branch guardrail: only `bulkgh/`-prefixed branch names, enforced in dry-run
+- [x] Execution-plan review: per-repo action lists with native before/after
+      diffs in the detail pane
+- [x] Worked example shipped: `remove_line_with_string` recipe deletes lines
+      containing a string, repairing JSON trailing commas when the removed
+      key-value pair was last in its object
+- [ ] Repo selection + write arming (phase 4, with the guarded live handle)
+
+Phases 4-5 (live writes, PR creation, guarded merge/cancel) are specified in
 plan v2 and not yet implemented.
 
 ## License

@@ -137,8 +137,11 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
     /// generation — marked cacheable.
     private func requestBody(userContent: String, context: ScriptGenerationContext,
                              stream: Bool) throws -> [String: Any] {
-        guard let apiDeclaration = ResourceLocator.apiDeclaration else {
+        guard var apiDeclaration = ResourceLocator.apiDeclaration else {
             throw LLMClientError.invalidResponse("bulkgh.d.ts missing from bundle")
+        }
+        if context.phase == .update, let update = ResourceLocator.updateDeclaration {
+            apiDeclaration += "\n\n" + update
         }
         var body: [String: Any] = [
             "model": model,

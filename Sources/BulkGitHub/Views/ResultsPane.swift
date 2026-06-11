@@ -71,7 +71,7 @@ struct StatusBadge: View {
         case .skipped, .alreadyUpToDate: return .orange
         case .failed, .blocked, .conflicted: return .red
         case .cancelled: return .gray
-        case .branchExists, .prExists, .prRaised: return .purple
+        case .planned, .branchExists, .prExists, .prRaised: return .purple
         }
     }
 }

@@ -64,9 +64,8 @@ struct SidebarView: View {
         List {
             Section("Job phases") {
                 Label("Check", systemImage: "magnifyingglass")
-                Label("Update", systemImage: "pencil")
-                    .foregroundStyle(.tertiary)
-                    .help("Later phase — dry-run updates")
+                Label("Update (dry run)", systemImage: "pencil")
+                    .help("Update scripts record an execution plan — nothing reaches GitHub")
                 Label("Merge", systemImage: "arrow.triangle.merge")
                     .foregroundStyle(.tertiary)
                     .help("Later phase — guarded merge")
@@ -84,6 +83,13 @@ struct SidebarView: View {
                     model.loadRecipe(named: "find_string_in_path")
                 } label: {
                     Label("Find string under path", systemImage: "text.magnifyingglass")
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    model.loadRecipe(named: "remove_line_with_string")
+                } label: {
+                    Label("Delete lines with string", systemImage: "pencil.slash")
                 }
                 .buttonStyle(.plain)
             }

@@ -32,6 +32,13 @@ public enum ResourceLocator {
         string(at: "bulkgh.d.ts")
     }
 
+    /// Update-phase additions, merged into the GitHub interface only when
+    /// validating/prompting update scripts (check scripts cannot even
+    /// type-check a write).
+    public static var updateDeclaration: String? {
+        string(at: "bulkgh.update.d.ts")
+    }
+
     /// A bundled recipe by file name (without extension).
     public static func recipe(named name: String) -> String? {
         string(at: "recipes/\(name).ts")

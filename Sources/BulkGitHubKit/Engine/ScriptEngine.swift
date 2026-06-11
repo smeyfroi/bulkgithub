@@ -57,6 +57,7 @@ public final class ScriptEngine {
                        results: collector.snapshotResults,
                        logs: collector.snapshotLogs,
                        auditEvents: collector.snapshotAudit,
+                       plannedActions: collector.snapshotPlan,
                        duration: Date().timeIntervalSince(start))
         }
 
