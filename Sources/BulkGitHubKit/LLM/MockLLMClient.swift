@@ -8,8 +8,17 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
     public init() {}
 
     public func makeScript(prompt: String, context: ScriptGenerationContext) async throws -> String {
-        guard var script = ResourceLocator.goldenRecipe else {
-            throw LLMClientError.invalidResponse("golden recipe resource missing from bundle")
+        // Crude routing between the bundled recipes: "contains" prompts go to
+        // the string scan, key/value prompts to the YAML check.
+        if prompt.range(of: "contains", options: .caseInsensitive) != nil {
+            return try stringScanScript(for: prompt)
+        }
+        return try yamlKeyValueScript(for: prompt)
+    }
+
+    private func yamlKeyValueScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "find_yaml_key_value") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
         }
         if let path = firstMatch(in: prompt, pattern: #"([\w./+-]+\.(?:ya?ml|json|toml|txt|md))"#) {
             script = Self.replaceParam(in: script, name: "path", value: path)
@@ -19,6 +28,21 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         }
         if let key = firstMatch(in: prompt, pattern: #"key\s+`?([A-Za-z0-9_.-]+)`?"#) {
             script = Self.replaceParam(in: script, name: "key", value: key)
+        }
+        return script
+    }
+
+    private func stringScanScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "find_string_in_path") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let needle = firstMatch(in: prompt, pattern: #"`([^`]+)`"#)
+            ?? firstMatch(in: prompt, pattern: #""([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "needle", value: needle)
+        }
+        if let directory = firstMatch(in: prompt, pattern: #"files?\s+(?:in|under)\s+([\w./-]+)"#) {
+            let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
+            script = Self.replaceParam(in: script, name: "glob", value: "\(trimmed)/**")
         }
         return script
     }

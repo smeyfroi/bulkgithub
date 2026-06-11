@@ -287,6 +287,22 @@ Secrets: GitHub and LLM credentials in Keychain only. Never in saved jobs, scrip
 
 Idempotency: predictable job-prefixed branch names; re-runs detect existing branches/PRs (`already up to date`, `branch exists`, `PR exists` states) and resume rather than duplicate.
 
+### Worked example for the update phases
+
+First update campaign to implement against (check phase already ships as the
+`find_string_in_path` recipe, and the demo fixtures encode both cases):
+
+- Find: repos where a file under `deploy/` contains
+  `ec2-shell-prod-eu-west-1-keypair-1`.
+- Update: delete the line containing that string from each matching file.
+- Proviso: matching files may be YAML or JSON. In JSON, if the removed
+  key-value pair is the last member of its object, the now-dangling comma at
+  the end of the preceding line must be removed too. This argues for
+  format-aware line surgery (delete line, then repair the neighbour) rather
+  than parse–modify–serialise, which would destroy formatting elsewhere in
+  the file — decide during phase 3 design and encode the choice as a house
+  rule for update scripts.
+
 Repository/job states (unchanged from v1):
 
 - candidate

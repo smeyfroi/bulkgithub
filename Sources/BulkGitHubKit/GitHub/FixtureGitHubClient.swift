@@ -128,13 +128,33 @@ extension FixtureGitHubClient {
         stack: production
         """
 
+        // The keypair worked example (plan v2, update phases): the string to
+        // find — and later delete line-wise — appears once in YAML and once in
+        // JSON with the key-value pair LAST in its object, so the future
+        // deletion must also strip the trailing comma on the line above.
+        let keypairYAML = """
+        region: eu-west-1
+        keyPair: ec2-shell-prod-eu-west-1-keypair-1
+        instanceType: m5.large
+        """
+
+        let keypairJSON = """
+        {
+          "stack": "web-frontend",
+          "region": "eu-west-1",
+          "keyPair": "ec2-shell-prod-eu-west-1-keypair-1"
+        }
+        """
+
         return FixtureGitHubClient(
             repos: [api, web, pipeline, legacy, infra, flaky, docs],
             contents: [
                 api.fullName: ["deploy/prod.yml": matchingYAML,
                                ".github/dependabot.yml": "version: 2\nupdates: []\n"],
-                web.fullName: ["deploy/prod.yml": differingYAML],
-                pipeline.fullName: ["deploy/prod.yml": matchingYAML],
+                web.fullName: ["deploy/prod.yml": differingYAML,
+                               "deploy/infra.json": keypairJSON],
+                pipeline.fullName: ["deploy/prod.yml": matchingYAML,
+                                    "deploy/keys.yml": keypairYAML],
                 legacy.fullName: ["deploy/prod.yml": matchingYAML],
                 infra.fullName: [:],  // stale search hit: repo exists, file absent
                 flaky.fullName: ["deploy/prod.yml": matchingYAML], // unreachable: error injected

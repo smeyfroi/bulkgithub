@@ -23,6 +23,9 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         }
         .navigationTitle("BulkGitHub")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            EnvironmentFooter()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -71,23 +74,50 @@ struct SidebarView: View {
 
             Section("Recipes") {
                 Button {
-                    model.loadGoldenRecipe()
+                    model.loadRecipe(named: "find_yaml_key_value")
                 } label: {
                     Label("Find YAML key/value", systemImage: "doc.text.magnifyingglass")
                 }
                 .buttonStyle(.plain)
-            }
 
-            Section("Environment") {
-                Label(model.settings.useFixtureGitHub ? "Fixture data" : "Live GitHub",
-                      systemImage: model.settings.useFixtureGitHub ? "shippingbox" : "network")
-                Label(model.settings.useMockLLM ? "Mock LLM" : "Anthropic",
-                      systemImage: model.settings.useMockLLM ? "cpu" : "sparkles")
-                Label(model.typeCheckerLabel,
-                      systemImage: model.typeCheckingAvailable ? "checkmark.seal" : "xmark.seal")
+                Button {
+                    model.loadRecipe(named: "find_string_in_path")
+                } label: {
+                    Label("Find string under path", systemImage: "text.magnifyingglass")
+                }
+                .buttonStyle(.plain)
             }
-            .font(.callout)
         }
         .listStyle(.sidebar)
+    }
+}
+
+/// Ambient environment status — deliberately out of the sidebar so it doesn't
+/// compete with the workflow; lives in a quiet footer across the window.
+struct EnvironmentFooter: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Label("org \(model.settings.organisation)", systemImage: "building.2")
+            Label(model.settings.useFixtureGitHub ? "Fixture data" : "Live GitHub",
+                  systemImage: model.settings.useFixtureGitHub ? "shippingbox" : "network")
+            Label(model.settings.useMockLLM ? "Mock LLM" : "Anthropic",
+                  systemImage: model.settings.useMockLLM ? "cpu" : "sparkles")
+            Label(model.typeCheckerLabel,
+                  systemImage: model.typeCheckingAvailable ? "checkmark.seal" : "xmark.seal")
+            Spacer()
+            SettingsLink {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.plain)
+            .help("Settings")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 }

@@ -32,9 +32,14 @@ public enum ResourceLocator {
         string(at: "bulkgh.d.ts")
     }
 
+    /// A bundled recipe by file name (without extension).
+    public static func recipe(named name: String) -> String? {
+        string(at: "recipes/\(name).ts")
+    }
+
     /// The golden recipe: the plan's worked example as a runnable script.
     public static var goldenRecipe: String? {
-        string(at: "recipes/find_yaml_key_value.ts")
+        recipe(named: "find_yaml_key_value")
     }
 
     /// The bundled TypeScript compiler and the ES lib declaration files it

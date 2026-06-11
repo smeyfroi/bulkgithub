@@ -57,11 +57,15 @@ final class AppModel {
         return results.first { $0.id == selectedRepo }
     }
 
-    func loadGoldenRecipe() {
-        guard let recipe = ResourceLocator.goldenRecipe else { return }
+    func loadRecipe(named name: String) {
+        guard let recipe = ResourceLocator.recipe(named: name) else { return }
         scriptText = recipe
         diagnostics = []
         statusLine = "Loaded recipe — Check to type-check, Run to execute"
+    }
+
+    func loadGoldenRecipe() {
+        loadRecipe(named: "find_yaml_key_value")
     }
 
     // MARK: Client selection

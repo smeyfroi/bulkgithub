@@ -74,6 +74,68 @@ struct GoldenRecipeTests {
     }
 }
 
+/// The keypair worked example (plan v2 → update phases): the check half,
+/// driven from the user's natural-language prompt through the mock LLM, the
+/// validation pipeline, and the engine.
+@Suite("Keypair recipe end-to-end")
+struct KeypairRecipeTests {
+
+    static let prompt = "repos where a file in deploy/ contains the string `ec2-shell-prod-eu-west-1-keypair-1`"
+
+    @Test("prompt routes through the mock to a validated string-scan script")
+    func promptToScript() async throws {
+        let script = try await MockLLMClient().makeScript(
+            prompt: Self.prompt,
+            context: ScriptGenerationContext(organisation: "geome"))
+        #expect(script.contains("needle: \"ec2-shell-prod-eu-west-1-keypair-1\""))
+        #expect(script.contains("glob: \"deploy/**\""))
+
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: script)
+        #expect(validated.meta.params["needle"] == "ec2-shell-prod-eu-west-1-keypair-1")
+        #expect(validated.meta.params["glob"] == "deploy/**")
+    }
+
+    @Test("check run finds the YAML and JSON occurrences")
+    func endToEnd() async throws {
+        let recipe = try #require(ResourceLocator.recipe(named: "find_string_in_path"))
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.diagnostics.filter { $0.severity == .error }.isEmpty)
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               onEvent: { _ in })
+
+        #expect(outcome.status == .completed)
+
+        var byRepo: [String: RepoResult] = [:]
+        for result in outcome.results { byRepo[result.id] = result }
+
+        // YAML occurrence
+        #expect(byRepo["geome/data-pipeline"]?.status == .verifiedMatch)
+        #expect(byRepo["geome/data-pipeline"]?.evidence.first?.path == "deploy/keys.yml")
+        // JSON occurrence, key-value pair last in its object (the future
+        // trailing-comma deletion case)
+        #expect(byRepo["geome/web-frontend"]?.status == .verifiedMatch)
+        #expect(byRepo["geome/web-frontend"]?.evidence.first?.path == "deploy/infra.json")
+        #expect(byRepo["geome/web-frontend"]?.evidence.first?.explanation?.contains("keyPair") == true)
+
+        #expect(byRepo["geome/api-service"]?.status == .skipped)       // deploy files, no needle
+        #expect(byRepo["geome/legacy-batch"]?.status == .skipped)      // archived
+        #expect(byRepo["geome/infra-tools"]?.status == .skipped)       // nothing matches the glob
+        #expect(byRepo["geome/docs-site"]?.status == .skipped)         // nothing matches the glob
+        #expect(byRepo["geome/flaky-service"]?.status == .failed)
+
+        // All seven repos enumerated; every one reached a terminal status.
+        #expect(outcome.results.count == 7)
+        #expect(outcome.results.allSatisfy { $0.status != .candidate })
+    }
+}
+
 @Suite("Support")
 struct SupportTests {
 
