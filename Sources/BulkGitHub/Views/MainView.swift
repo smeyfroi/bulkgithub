@@ -107,6 +107,9 @@ struct MainView: View {
         .sheet(isPresented: $model.showApplySheet) {
             ApplySheet()
         }
+        .onChange(of: model.settings.useFixtureGitHub) {
+            model.dataSourceChanged()
+        }
     }
 }
 

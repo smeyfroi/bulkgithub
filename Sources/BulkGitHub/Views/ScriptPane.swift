@@ -98,7 +98,9 @@ struct WriteModeBanner: View {
                     .fontWeight(.semibold)
             } else {
                 Image(systemName: "shield.lefthalf.filled")
-                Text("DRY RUN — writes are recorded as a reviewable plan; nothing reaches GitHub")
+                Text(model.settings.useFixtureGitHub
+                        ? "DRY RUN — writes are recorded as a reviewable plan; nothing reaches GitHub"
+                        : "DRY RUN — writes are recorded as a reviewable plan; reads come from live GitHub, nothing is written")
             }
             Spacer()
         }

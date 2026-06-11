@@ -295,6 +295,32 @@ final class AppModel {
         }
     }
 
+    /// Switching between fixture data and live GitHub is switching WORLDS:
+    /// results, plans, artifacts, approvals, and carried state from the old
+    /// world are meaningless in the new one (fixture PR receipts point at
+    /// nothing real, and vice versa). Workspaces — prompts, scripts, params —
+    /// survive; they are world-independent.
+    func dataSourceChanged() {
+        guard !running else { return }
+        resultsByPhase = [:]
+        ranScriptByPhase = [:]
+        plannedActions = [:]
+        plannedActionsPhase = nil
+        artifacts = []
+        approvals = []
+        appliedPlan = [:]
+        jobState = [:]
+        selectedRepo = nil
+        canaryRepo = ""
+        quotaText = nil
+        logs = []
+        auditEvents = []
+        statusLine = settings.useFixtureGitHub
+            ? "Switched to fixture data — workflow state cleared, scripts kept"
+            : "Switched to LIVE GitHub — workflow state cleared, scripts kept"
+        saveNow()
+    }
+
     func clearResults() {
         resultsByPhase[phase] = []
         ranScriptByPhase[phase] = nil
