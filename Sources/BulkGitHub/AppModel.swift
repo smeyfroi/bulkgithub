@@ -43,8 +43,14 @@ final class AppModel {
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
     var plannedActions: [String: [PlannedAction]] = [:]
+    /// Remote objects armed runs of this job created (the artifact registry —
+    /// later phases' merge/cancel operate only on these).
+    var artifacts: [Artifact] = []
     var statusLine: String = "Ready"
     var running = false
+    /// True while an ARMED run is executing — drives the loud mode banner.
+    var currentRunIsArmed = false
+    var showApplySheet = false
     var generating = false
     var validating = false
     var selectedRepo: String?
@@ -95,6 +101,7 @@ final class AppModel {
                 jobState = job.state ?? [:]
                 prTitle = job.prTitle ?? ""
                 canaryRepo = job.canaryRepo ?? ""
+                artifacts = job.artifacts ?? []
                 statusLine = job.lastRunStatus ?? "Restored previous job"
             }
         }
@@ -381,10 +388,29 @@ final class AppModel {
         runTask = Task { await runInternal() }
     }
 
-    private func runInternal() async {
+    /// Re-run the reviewed dry-run plan with writes ARMED for the selected
+    /// repos. The engine enforces plan conformance and the drift guard; the
+    /// live client additionally has writes hard-disabled in this build, so
+    /// armed runs are only possible against fixture data.
+    func applyPlan(to repoIDs: Set<String>) {
+        guard !running, !generating, phase == .update else { return }
+        guard !repoIDs.isEmpty, !plannedActions.isEmpty else { return }
+        guard settings.useFixtureGitHub else {
+            statusLine = "Live GitHub writes are disabled in this build — armed runs work against fixture data only"
+            return
+        }
+        runTask = Task { await runInternal(writeMode: .armed, armedTargets: repoIDs) }
+    }
+
+    private func runInternal(writeMode: EngineConfiguration.WriteMode = .dryRun,
+                             armedTargets: Set<String> = []) async {
         guard let validated = await validate() else { return }
         running = true
-        defer { running = false }
+        currentRunIsArmed = (writeMode == .armed)
+        defer {
+            running = false
+            currentRunIsArmed = false
+        }
         let runPhase = validated.meta.phase
         let runScript = scriptText
         // A fresh check supersedes the canary choice — it was picked from the
@@ -395,17 +421,25 @@ final class AppModel {
         resultsByPhase[runPhase] = []
         logs = []
         auditEvents = []
-        if runPhase == .update { plannedActions = [:] }
-        statusLine = "Running…"
+        // The reviewed plan survives an armed run — it is the reference the
+        // engine checked the writes against.
+        if runPhase == .update, writeMode == .dryRun { plannedActions = [:] }
+        statusLine = writeMode == .armed ? "ARMED — applying the reviewed plan…" : "Running…"
         var params = paramsDraft
         if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
             params["prTitle"] = prTitle
         }
         var configuration = EngineConfiguration(settings: settings)
-        let canary = canaryRepo.trimmingCharacters(in: .whitespaces)
-        if runPhase == .update, !canary.isEmpty {
-            let fullName = canary.contains("/") ? canary : "\(settings.organisation)/\(canary)"
-            configuration.targetRepos = [fullName]
+        if writeMode == .armed {
+            configuration.writeMode = .armed
+            configuration.targetRepos = armedTargets
+            configuration.referencePlan = plannedActions
+        } else {
+            let canary = canaryRepo.trimmingCharacters(in: .whitespaces)
+            if runPhase == .update, !canary.isEmpty {
+                let fullName = canary.contains("/") ? canary : "\(settings.organisation)/\(canary)"
+                configuration.targetRepos = [fullName]
+            }
         }
         let outcome = await engine.run(javaScript: validated.javaScript,
                                        phase: runPhase,
@@ -427,7 +461,12 @@ final class AppModel {
         ranScriptByPhase[runPhase] = runScript
         logs = outcome.logs
         auditEvents = outcome.auditEvents
-        if runPhase == .update { plannedActions = outcome.plannedActions }
+        if runPhase == .update, writeMode == .dryRun {
+            plannedActions = outcome.plannedActions
+        }
+        if !outcome.artifacts.isEmpty {
+            artifacts.append(contentsOf: outcome.artifacts)
+        }
         if !outcome.state.isEmpty {
             jobState.merge(outcome.state) { _, new in new }
         }
@@ -435,14 +474,25 @@ final class AppModel {
         if let quotaText {
             logs.append("◆ GitHub \(quotaText) requests remaining")
         }
-        let plannedRepos = outcome.results.filter { $0.status == .planned }
-        if !plannedRepos.isEmpty {
-            // Keep the user's selection (e.g. the canary they were
-            // inspecting); only auto-select when nothing was chosen.
-            if selectedRepo == nil { selectedRepo = plannedRepos.first?.id }
-            statusLine = "Run \(outcome.status.label) — \(plannedRepos.count) repo(s) planned; dry-run diffs in the right panel"
+        if writeMode == .armed {
+            let raised = outcome.results.filter { $0.status == .prRaised }
+            let halted = outcome.results.filter {
+                [.conflicted, .branchExists, .prExists].contains($0.status)
+            }
+            if selectedRepo == nil { selectedRepo = raised.first?.id }
+            var summary = "ARMED run \(outcome.status.label) — \(raised.count) PR(s) raised"
+            if !halted.isEmpty { summary += ", \(halted.count) halted (see results)" }
+            statusLine = summary
         } else {
-            statusLine = "Run \(outcome.status.label)"
+            let plannedRepos = outcome.results.filter { $0.status == .planned }
+            if !plannedRepos.isEmpty {
+                // Keep the user's selection (e.g. the canary they were
+                // inspecting); only auto-select when nothing was chosen.
+                if selectedRepo == nil { selectedRepo = plannedRepos.first?.id }
+                statusLine = "Run \(outcome.status.label) — \(plannedRepos.count) repo(s) planned; dry-run diffs in the right panel"
+            } else {
+                statusLine = "Run \(outcome.status.label)"
+            }
         }
         saveNow()
     }
@@ -490,6 +540,7 @@ final class AppModel {
         job.state = jobState
         job.prTitle = prTitle
         job.canaryRepo = canaryRepo
+        job.artifacts = artifacts
         job.promptsByPhase = Self.rawKeyed(promptsByPhase)
         job.lastRunStatus = statusLine
         try? store.save(AppStateSnapshot(settings: settings, job: job))

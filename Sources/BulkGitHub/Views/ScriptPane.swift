@@ -9,6 +9,9 @@ struct ScriptPane: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 6) {
+            if model.phase == .update {
+                WriteModeBanner()
+            }
             HStack(spacing: 8) {
                 TextField(model.phase == .update
                             ? "Describe the change to make across matching repos…"
@@ -73,6 +76,33 @@ struct ScriptPane: View {
             }
             .padding([.horizontal, .bottom], 10)
         }
+    }
+}
+
+/// It must always be obvious whether update writes are real: a full-width
+/// banner above the workspace, purple for dry-run, red while ARMED.
+struct WriteModeBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if model.currentRunIsArmed {
+                Image(systemName: "bolt.fill")
+                Text("ARMED — the reviewed plan is being applied (writes go to \(model.settings.useFixtureGitHub ? "fixture data" : "GitHub"))")
+                    .fontWeight(.semibold)
+            } else {
+                Image(systemName: "shield.lefthalf.filled")
+                Text("DRY RUN — writes are recorded as a reviewable plan; nothing reaches GitHub")
+            }
+            Spacer()
+        }
+        .font(.callout)
+        .foregroundStyle(model.currentRunIsArmed ? Color.red : Color.purple)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .background((model.currentRunIsArmed ? Color.red : Color.purple).opacity(0.10))
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 

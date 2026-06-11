@@ -78,10 +78,31 @@ credentials are stored (Keychain only; scripts can never read them).
 - [x] Worked example shipped: `remove_line_with_string` recipe deletes lines
       containing a string, repairing JSON trailing commas when the removed
       key-value pair was last in its object
-- [ ] Repo selection + write arming (phase 4, with the guarded live handle)
+- [x] Repo selection + write arming (phase 4, with the guarded live handle)
 
-Phases 4-5 (live writes, PR creation, guarded merge/cancel) are specified in
-plan v2 and not yet implemented.
+## Phase 4 status (write mode — writes currently hard-disabled)
+
+- [x] Guarded write handle: the same reviewed script re-runs unchanged with
+      writes armed, gated in order by repo selection, conformance with the
+      reviewed dry-run plan (every write must be exactly the next reviewed
+      action), a **drift guard** (the remote file must still match the
+      reviewed "before" AND the script must produce the reviewed "after"),
+      and idempotency (existing branch/PR halts the repo, no duplicates)
+- [x] Arming flow: "Apply…" sheet with per-repo selection (canary
+      preselected), explicit target statement, destructive-styled confirm
+- [x] Mode is always visible: DRY RUN / ARMED banner over the update
+      workspace, ARMED chip in the footer, "Dry Run" toolbar label
+- [x] Artifact registry: branches and PRs created by armed runs are recorded
+      on the job (with links) — later phases' merge/cancel operate only on
+      these
+- [x] **Live GitHub writes hard-disabled** (`LiveGitHubClient.liveWritesEnabled`
+      is `false`; enabling requires a code change and release): the armed
+      workflow runs against fixture data until shaken down end to end
+- [ ] Enable live writes once the workflow has been exercised
+- [ ] Resume semantics for partially-applied repos (currently: halt safely)
+
+Phase 5 (guarded merge and cancel) is specified in plan v2 and not yet
+implemented.
 
 ## License
 

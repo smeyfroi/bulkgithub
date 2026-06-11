@@ -55,9 +55,11 @@ enum HostBindings {
                         collector: JobCollector,
                         limiter: AsyncSemaphore,
                         cancel: CancelBox,
-                        vmQueue: DispatchQueue) {
+                        vmQueue: DispatchQueue,
+                        writeMode: EngineConfiguration.WriteMode = .dryRun) {
         installGitHub(in: context, phase: phase, github: github, organisation: organisation,
-                      collector: collector, limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+                      collector: collector, limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                      writeMode: writeMode)
         installJob(in: context, params: params, collector: collector)
         installParse(in: context)
         installConsole(in: context, collector: collector)
@@ -68,7 +70,8 @@ enum HostBindings {
     private static func installGitHub(in context: JSContext, phase: JobPhase,
                                       github: GitHubClient, organisation: String,
                                       collector: JobCollector, limiter: AsyncSemaphore,
-                                      cancel: CancelBox, vmQueue: DispatchQueue) {
+                                      cancel: CancelBox, vmQueue: DispatchQueue,
+                                      writeMode: EngineConfiguration.WriteMode = .dryRun) {
         guard let gh = JSValue(newObjectIn: context) else { return }
 
         let listOrgRepos: @convention(block) () -> JSValue = {
@@ -203,14 +206,23 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(searchPRs, to: AnyObject.self),
                      forKeyedSubscript: "searchPRs" as NSString)
 
-        // Update phase: the RECORDING write surface. Nothing reaches GitHub —
-        // each call validates its arguments, records a PlannedAction, and
-        // returns a synthesized response so read-modify-write logic flows.
-        // Check-phase contexts never get these properties at all. Live guarded
-        // writes arrive with phase 4.
+        // Update phase write surface. The script-facing API is IDENTICAL in
+        // both modes — the same reviewed script re-runs unchanged:
+        // - dry run (default): writes are recorded as PlannedActions and
+        //   answered with synthesized responses; nothing reaches the client.
+        // - armed: writes call the GitHub client, guarded by repo selection,
+        //   conformance with the reviewed plan, the drift guard, and
+        //   idempotency checks.
+        // Check-phase contexts never get these properties at all.
         if phase == .update {
-            installRecordingWrites(on: gh, collector: collector,
+            switch writeMode {
+            case .dryRun:
+                installRecordingWrites(on: gh, collector: collector,
+                                       limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+            case .armed:
+                installArmedWrites(on: gh, github: github, collector: collector,
                                    limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+            }
         }
 
         context.setObject(gh, forKeyedSubscript: "gh" as NSString)
@@ -294,6 +306,169 @@ enum HostBindings {
                      forKeyedSubscript: "createPR" as NSString)
     }
 
+    // MARK: - Armed writes (guarded live handle)
+
+    /// The guarded write surface for ARMED runs. Same script-facing API as
+    /// the recording surface, but writes reach the GitHub client — after
+    /// passing, in order:
+    /// 1. repo selection (only repos the user armed),
+    /// 2. halt state (a repo that conflicted/halted writes nothing further),
+    /// 3. plan conformance (the call must be exactly the next action of the
+    ///    reviewed dry-run plan),
+    /// 4. drift guard (putContent: the remote file must still match the
+    ///    plan's recorded "before", and the script's output must match the
+    ///    reviewed "after"),
+    /// 5. idempotency (existing branch/PR halts the repo instead of
+    ///    duplicating).
+    /// "What you reviewed is exactly what gets written, or nothing."
+    private static func installArmedWrites(on gh: JSValue, github: GitHubClient,
+                                           collector: JobCollector,
+                                           limiter: AsyncSemaphore, cancel: CancelBox,
+                                           vmQueue: DispatchQueue) {
+        @Sendable func preflight(_ repo: String) throws {
+            if collector.isOutsideCanary(repo) {
+                collector.haltRepo(repo, status: .skipped,
+                                   reason: "not selected for writes — nothing written")
+                throw GitHubClientError.http(403, "\(repo) is not selected for this armed run")
+            }
+            if collector.isHalted(repo) {
+                throw GitHubClientError.http(409, "writes to \(repo) were halted earlier in this run")
+            }
+        }
+
+        let createBranch: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, nameValue, shaValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("createBranch: repo is required")
+            }
+            guard let name = stringArg(nameValue), let sha = stringArg(shaValue) else {
+                return rejectedPromise("createBranch: name and fromSha are required")
+            }
+            guard name.hasPrefix("bulkgh/") else {
+                return rejectedPromise(
+                    "createBranch: branch names must start with \"bulkgh/\" — job-prefixed branches are the only ones this app will ever create or delete (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard case .createBranch(let expectedName, _)? = collector.expectedNextAction(repo: fullName),
+                      expectedName == name else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script deviated from the reviewed plan (createBranch \(name)) — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: createBranch \(name) is not the next reviewed action for \(fullName)")
+                }
+                if try await github.getRef(repo: fullName, ref: "heads/\(name)") != nil {
+                    collector.haltRepo(fullName, status: .branchExists,
+                                       reason: "branch \(name) already exists — nothing written (resume arrives in a later phase)")
+                    collector.audit(kind: "write.createBranch", repo: fullName,
+                                    detail: "\(name) already exists — halted")
+                    throw GitHubClientError.http(409, "branch \(name) already exists in \(fullName)")
+                }
+                let newSha = try await github.createBranch(repo: fullName, name: name, fromSha: sha)
+                collector.consumeNextAction(repo: fullName)
+                collector.recordArtifact(Artifact(kind: .branch, repo: fullName, name: name))
+                collector.audit(kind: "write.createBranch", repo: fullName,
+                                detail: "\(name) from \(String(sha.prefix(12))) (ARMED)")
+                return ["sha": newSha]
+            }
+        }
+        gh.setObject(unsafeBitCast(createBranch, to: AnyObject.self),
+                     forKeyedSubscript: "createBranch" as NSString)
+
+        let putContent: @convention(block) (JSValue?, JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, pathValue, contentValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("putContent: repo is required")
+            }
+            guard let path = stringArg(pathValue), let content = stringArg(contentValue) else {
+                return rejectedPromise("putContent: path and content are required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let branch = stringArg(opts.objectForKeyedSubscript("branch")),
+                  let message = stringArg(opts.objectForKeyedSubscript("message")) else {
+                return rejectedPromise("putContent: opts { branch, message } are required")
+            }
+            guard branch.hasPrefix("bulkgh/") else {
+                return rejectedPromise("putContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard case .putContent(let expectedPath, let expectedBranch, _, let expectedBefore, let expectedAfter)?
+                        = collector.expectedNextAction(repo: fullName),
+                      expectedPath == path, expectedBranch == branch else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script deviated from the reviewed plan (putContent \(path)) — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: putContent \(path) is not the next reviewed action for \(fullName)")
+                }
+                // Drift guard, both directions: the remote must still match
+                // what the review saw, and the script must produce exactly
+                // what the review approved.
+                let current = try await github.getContent(repo: fullName, path: path, ref: nil)
+                guard current == expectedBefore else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "\(path) changed on the remote since the reviewed dry run — re-run the dry run and review again")
+                    throw GitHubClientError.http(409, "drift: \(path) in \(fullName) no longer matches the reviewed dry run")
+                }
+                guard content == expectedAfter else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script produced different content for \(path) than the reviewed plan — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: content for \(path) differs from the reviewed plan")
+                }
+                let commit = try await github.putContent(repo: fullName, path: path, content: content,
+                                                         branch: branch, message: message)
+                collector.consumeNextAction(repo: fullName)
+                collector.audit(kind: "write.putContent", repo: fullName,
+                                detail: "\(path) on \(branch) → \(String(commit.prefix(12))) (ARMED)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(putContent, to: AnyObject.self),
+                     forKeyedSubscript: "putContent" as NSString)
+
+        let createPR: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("createPR: repo is required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let head = stringArg(opts.objectForKeyedSubscript("head")),
+                  let title = stringArg(opts.objectForKeyedSubscript("title")),
+                  let body = stringArg(opts.objectForKeyedSubscript("body")) else {
+                return rejectedPromise("createPR: opts { head, title, body } are required")
+            }
+            guard head.hasPrefix("bulkgh/") else {
+                return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard case .createPR(let expectedHead, let expectedTitle, let expectedBody)?
+                        = collector.expectedNextAction(repo: fullName),
+                      expectedHead == head, expectedTitle == title, expectedBody == body else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script deviated from the reviewed plan (createPR from \(head)) — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: createPR from \(head) does not match the reviewed plan for \(fullName)")
+                }
+                if let existing = try await github.listPRs(repo: fullName, head: head, state: "open").first {
+                    collector.haltRepo(fullName, status: .prExists,
+                                       reason: "PR #\(existing.number) already open for \(head): \(existing.url)")
+                    throw GitHubClientError.http(409, "a PR already exists for \(head) in \(fullName)")
+                }
+                // Authoritative base branch — never assume main.
+                let repoMeta = try await github.getRepo(fullName: fullName)
+                collector.remember(repoMeta)
+                let pr = try await github.createPR(repo: fullName, head: head,
+                                                   base: repoMeta.defaultBranch,
+                                                   title: title, body: body)
+                collector.consumeNextAction(repo: fullName)
+                collector.recordArtifact(Artifact(kind: .pullRequest, repo: fullName,
+                                                  name: "#\(pr.number)", url: pr.url))
+                collector.upsert(repo: collector.repo(named: fullName), status: .prRaised,
+                                 reason: "PR #\(pr.number) — \(pr.url)")
+                collector.audit(kind: "write.createPR", repo: fullName,
+                                detail: "#\(pr.number) \(pr.url) (ARMED)")
+                return pr.scriptValue
+            }
+        }
+        gh.setObject(unsafeBitCast(createPR, to: AnyObject.self),
+                     forKeyedSubscript: "createPR" as NSString)
+    }
+
     /// Deterministic fake SHA for synthesized dry-run responses.
     private static func syntheticSha(_ basis: String) -> String {
         let hash = basis.unicodeScalars.reduce(into: UInt64(5381)) {
@@ -345,6 +520,10 @@ enum HostBindings {
 
         let skip: @convention(block) (JSValue?, JSValue?) -> Void = { repoValue, reasonValue in
             guard let repoValue, let ref = resolveRepo(repoValue, collector: collector) else { return }
+            // The host's halt verdict (conflicted/drift/already-exists/not
+            // selected) outranks the script's bookkeeping: the script's catch
+            // block reports the thrown refusal, which must not relabel it.
+            guard !collector.isHalted(ref.fullName) else { return }
             let reason = describe(reasonValue) ?? "skipped"
             collector.upsert(repo: ref, status: .skipped, reason: reason)
         }
@@ -353,6 +532,11 @@ enum HostBindings {
         let fail: @convention(block) (JSValue?, JSValue?) -> Void = { repoValue, messageValue in
             guard let repoValue, let ref = resolveRepo(repoValue, collector: collector) else { return }
             let message = describe(messageValue) ?? "error"
+            guard !collector.isHalted(ref.fullName) else {
+                collector.audit(kind: "job.error", repo: ref.fullName,
+                                detail: "(script report after host halt) \(message)")
+                return
+            }
             collector.upsert(repo: ref, status: .failed, reason: message)
             collector.audit(kind: "job.error", repo: ref.fullName, detail: message)
         }

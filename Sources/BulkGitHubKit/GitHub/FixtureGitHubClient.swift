@@ -21,6 +21,34 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         return _callLog
     }
 
+    // MARK: Write state (armed runs are exercised against fixtures)
+
+    /// repo -> branch name -> sha, for branches created through this client.
+    private var _branches: [String: [String: String]] = [:]
+    /// "repo|branch" -> path -> content: copy-on-write overlay seeded from the
+    /// default contents when the branch is created.
+    private var _branchContents: [String: [String: String]] = [:]
+    private var _pullRequests: [PullRequestRef] = []
+    private var _nextPRNumber = 100
+
+    /// Branches created through this client (test inspection).
+    public var createdBranches: [String: [String: String]] {
+        lock.lock(); defer { lock.unlock() }
+        return _branches
+    }
+
+    /// PRs created through this client (test inspection).
+    public var createdPRs: [PullRequestRef] {
+        lock.lock(); defer { lock.unlock() }
+        return _pullRequests
+    }
+
+    /// Content of a path as committed on a created branch (test inspection).
+    public func branchContent(repo: String, branch: String, path: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return _branchContents["\(repo)|\(branch)"]?[path]
+    }
+
     public init(repos: [RepoRef] = [],
                 contents: [String: [String: String]] = [:],
                 searchResults: [RepoRef] = [],
@@ -69,10 +97,18 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         if let message = errorInjections[repo] {
             throw GitHubClientError.network(message)
         }
+        if let ref, let overlay = branchOverlay(repo: repo, branch: ref) {
+            return overlay[path]
+        }
         guard let files = contents[repo] else {
             throw GitHubClientError.notFound("repository \(repo)")
         }
         return files[path]
+    }
+
+    private func branchOverlay(repo: String, branch: String) -> [String: String]? {
+        lock.lock(); defer { lock.unlock() }
+        return _branchContents["\(repo)|\(branch)"]
     }
 
     public func listFiles(repo: String, ref: String?) async throws -> [String] {
@@ -91,16 +127,104 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         record("getRef(\(repo), \(ref))")
         try await pause()
         guard repos.contains(where: { $0.fullName == repo }) else { return nil }
-        // Deterministic fake SHA derived from inputs.
-        let basis = "\(repo)#\(ref)"
-        let sha = basis.unicodeScalars.reduce(into: UInt64(5381)) { $0 = ($0 << 5) &+ $0 &+ UInt64($1.value) }
-        return String(format: "%016llx%016llx", sha, ~sha)
+        // Branches created through this client resolve to their stored sha.
+        if ref.hasPrefix("heads/") {
+            let name = String(ref.dropFirst("heads/".count))
+            if let created = createdBranchSha(repo: repo, name: name) { return created }
+            // Only default branches exist beyond created ones.
+            if let repoRef = repos.first(where: { $0.fullName == repo }),
+               name != repoRef.defaultBranch {
+                return nil
+            }
+        }
+        return Self.fakeSha("\(repo)#\(ref)")
+    }
+
+    private func createdBranchSha(repo: String, name: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return _branches[repo]?[name]
     }
 
     public func listPRs(repo: String, head: String?, state: String) async throws -> [PullRequestRef] {
         record("listPRs(\(repo))")
         try await pause()
-        return []
+        return openPRs(repo: repo, head: head, state: state)
+    }
+
+    private func openPRs(repo: String, head: String?, state: String) -> [PullRequestRef] {
+        lock.lock(); defer { lock.unlock() }
+        return _pullRequests.filter { pr in
+            pr.repo == repo
+                && (head == nil || pr.headRef == head)
+                && (state == "all" || pr.state == state)
+        }
+    }
+
+    public func createBranch(repo: String, name: String, fromSha: String) async throws -> String {
+        record("createBranch(\(repo), \(name))")
+        try await pause()
+        guard contents[repo] != nil || repos.contains(where: { $0.fullName == repo }) else {
+            throw GitHubClientError.notFound("repository \(repo)")
+        }
+        return try doCreateBranch(repo: repo, name: name)
+    }
+
+    private func doCreateBranch(repo: String, name: String) throws -> String {
+        lock.lock(); defer { lock.unlock() }
+        guard _branches[repo]?[name] == nil else {
+            throw GitHubClientError.http(422, "Reference already exists")
+        }
+        let sha = Self.fakeSha("\(repo)#heads/\(name)#created")
+        _branches[repo, default: [:]][name] = sha
+        _branchContents["\(repo)|\(name)"] = contents[repo] ?? [:]
+        return sha
+    }
+
+    public func putContent(repo: String, path: String, content: String,
+                           branch: String, message: String) async throws -> String {
+        record("putContent(\(repo), \(path), \(branch))")
+        try await pause()
+        return try doPutContent(repo: repo, path: path, content: content, branch: branch)
+    }
+
+    private func doPutContent(repo: String, path: String, content: String,
+                              branch: String) throws -> String {
+        lock.lock(); defer { lock.unlock() }
+        guard _branchContents["\(repo)|\(branch)"] != nil else {
+            throw GitHubClientError.notFound("branch \(branch) in \(repo)")
+        }
+        _branchContents["\(repo)|\(branch)"]?[path] = content
+        let commit = Self.fakeSha("\(repo)#\(branch)#\(path)#\(content.count)")
+        _branches[repo]?[branch] = commit
+        return commit
+    }
+
+    public func createPR(repo: String, head: String, base: String,
+                         title: String, body: String) async throws -> PullRequestRef {
+        record("createPR(\(repo), \(head))")
+        try await pause()
+        return try doCreatePR(repo: repo, head: head)
+    }
+
+    private func doCreatePR(repo: String, head: String) throws -> PullRequestRef {
+        lock.lock(); defer { lock.unlock() }
+        guard !_pullRequests.contains(where: { $0.repo == repo && $0.headRef == head && $0.state == "open" }) else {
+            throw GitHubClientError.http(422, "A pull request already exists for \(head)")
+        }
+        let number = _nextPRNumber
+        _nextPRNumber += 1
+        let pr = PullRequestRef(repo: repo, number: number, headRef: head,
+                                headSha: _branches[repo]?[head] ?? Self.fakeSha("\(repo)#\(head)"),
+                                state: "open",
+                                url: "https://github.com/\(repo)/pull/\(number)")
+        _pullRequests.append(pr)
+        return pr
+    }
+
+    /// Deterministic fake SHA derived from inputs.
+    private static func fakeSha(_ basis: String) -> String {
+        let sha = basis.unicodeScalars.reduce(into: UInt64(5381)) { $0 = ($0 << 5) &+ $0 &+ UInt64($1.value) }
+        return String(format: "%016llx%016llx", sha, ~sha)
     }
 
     public func searchPRs(org: String, query: String) async throws -> [PullRequestRef] {

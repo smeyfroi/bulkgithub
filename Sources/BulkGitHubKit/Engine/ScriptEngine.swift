@@ -16,6 +16,25 @@ public struct EngineConfiguration: Sendable {
     /// be trialled against a single repository first.
     public var targetRepos: Set<String>?
 
+    /// What update-phase writes do. Dry-run is the default, always: armed
+    /// runs must be explicitly configured per run and additionally require
+    /// targetRepos and a referencePlan.
+    public enum WriteMode: Sendable, Equatable {
+        /// Writes are recorded as PlannedActions; nothing reaches the client.
+        case dryRun
+        /// Writes call the GitHub client — guarded by repo selection, plan
+        /// conformance, the drift guard, and idempotency checks.
+        case armed
+    }
+
+    public var writeMode: WriteMode = .dryRun
+
+    /// The reviewed dry-run plan an armed run must conform to, keyed by repo
+    /// fullName. Every armed write is checked against the next expected
+    /// action; any deviation (different content, different branch, different
+    /// PR) halts that repo as conflicted with nothing further written.
+    public var referencePlan: [String: [PlannedAction]] = [:]
+
     public init() {}
 
     public init(settings: AppSettings) {
@@ -56,6 +75,7 @@ public final class ScriptEngine {
         let start = Date()
         let collector = JobCollector(initialState: initialState,
                                      targetRepos: configuration.targetRepos,
+                                     referencePlan: configuration.referencePlan,
                                      onEvent: onEvent)
         let cancel = CancelBox()
         let limiter = AsyncSemaphore(configuration.maxConcurrentHostCalls)
@@ -67,7 +87,21 @@ public final class ScriptEngine {
                        auditEvents: collector.snapshotAudit,
                        plannedActions: collector.snapshotPlan,
                        state: collector.snapshotState,
+                       artifacts: collector.snapshotArtifacts,
                        duration: Date().timeIntervalSince(start))
+        }
+
+        // Armed runs have hard preconditions — refuse rather than guess.
+        if configuration.writeMode == .armed {
+            guard phase == .update else {
+                return outcome(.failed("armed write mode is only valid for update-phase scripts"))
+            }
+            guard let targets = configuration.targetRepos, !targets.isEmpty else {
+                return outcome(.failed("armed runs require an explicit selection of target repos"))
+            }
+            guard !configuration.referencePlan.isEmpty else {
+                return outcome(.failed("armed runs require a reviewed dry-run plan to conform to"))
+            }
         }
 
         guard let vm = JSVirtualMachine(), let context = JSContext(virtualMachine: vm) else {
@@ -109,9 +143,12 @@ public final class ScriptEngine {
         HostBindings.install(in: context, phase: phase, params: params,
                              github: github, organisation: organisation,
                              collector: collector, limiter: limiter, cancel: cancel,
-                             vmQueue: vmQueue)
+                             vmQueue: vmQueue, writeMode: configuration.writeMode)
 
-        collector.log("run started (phase: \(phase.rawValue), org: \(organisation))")
+        let modeSuffix = configuration.writeMode == .armed
+            ? ", mode: ARMED — writes reach the GitHub client"
+            : (phase == .update ? ", mode: dry run" : "")
+        collector.log("run started (phase: \(phase.rawValue), org: \(organisation)\(modeSuffix))")
 
         let once = SettleOnce()
         let earlyFailure: String? = await withCheckedContinuation { continuation in

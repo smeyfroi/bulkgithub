@@ -5,6 +5,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         // Plain VStack rather than a safeAreaInset overlay: the footer takes
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
@@ -76,18 +77,125 @@ struct MainView: View {
                         Button {
                             model.run()
                         } label: {
-                            Label("Run", systemImage: "play.fill")
+                            // The update phase says what it does: a plain
+                            // "Run" must never read as "this writes".
+                            Label(model.phase == .update ? "Dry Run" : "Run",
+                                  systemImage: "play.fill")
                         }
-                        .help("Validate and run the script (check phase is read-only; update phase records a dry-run plan)")
+                        .help(model.phase == .update
+                                ? "Run the update script in dry-run mode — writes are recorded as a reviewable plan, nothing reaches GitHub"
+                                : "Validate and run the script (check phase is read-only)")
                         // Generation streams into the editor, so running
                         // mid-generation would execute a truncated script.
                         .disabled(model.scriptText.isEmpty || model.validating || model.generating)
+
+                        if model.phase == .update, !model.plannedActions.isEmpty {
+                            Button {
+                                model.showApplySheet = true
+                            } label: {
+                                Label("Apply…", systemImage: "bolt.fill")
+                            }
+                            .help("Arm writes: re-run the reviewed plan for selected repositories")
+                            .disabled(model.validating || model.generating || model.resultsAreStale)
+                        }
                     }
                 }
             }
 
             EnvironmentFooter()
         }
+        .sheet(isPresented: $model.showApplySheet) {
+            ApplySheet()
+        }
+    }
+}
+
+/// The arming flow: pick which planned repositories the reviewed plan is
+/// applied to, see exactly where writes will go, confirm explicitly.
+struct ApplySheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<String> = []
+
+    private var plannedRepos: [String] { model.plannedActions.keys.sorted() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Arm writes", systemImage: "bolt.fill")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.red)
+
+            Text("The reviewed dry-run plan re-runs with writes enabled, for the selected repositories only. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.settings.useFixtureGitHub {
+                Label("Writes go to: fixture data (offline test mode)", systemImage: "shippingbox")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.orange)
+            } else {
+                Label("Live GitHub writes are disabled in this build — switch to fixture data to exercise the armed workflow",
+                      systemImage: "lock.fill")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.red)
+            }
+
+            List(plannedRepos, id: \.self) { repo in
+                HStack {
+                    Toggle(isOn: binding(for: repo)) {
+                        HStack(spacing: 6) {
+                            Text(repo)
+                            if model.canaryRepo == repo {
+                                Image(systemName: "scope")
+                                    .foregroundStyle(.purple)
+                                    .help("Canary target")
+                            }
+                        }
+                    }
+                    Spacer()
+                    Text("\(model.plannedActions[repo]?.count ?? 0) action(s)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(minHeight: 160)
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(role: .destructive) {
+                    let repos = selected
+                    dismiss()
+                    model.applyPlan(to: repos)
+                } label: {
+                    Label("Arm and apply to \(selected.count) repo\(selected.count == 1 ? "" : "s")",
+                          systemImage: "bolt.fill")
+                }
+                .disabled(selected.isEmpty || !model.settings.useFixtureGitHub)
+            }
+        }
+        .padding(16)
+        .frame(width: 480)
+        .onAppear {
+            // Canary-first: preselect just the canary when it has a plan,
+            // otherwise everything planned.
+            if !model.canaryRepo.isEmpty, model.plannedActions[model.canaryRepo] != nil {
+                selected = [model.canaryRepo]
+            } else {
+                selected = Set(plannedRepos)
+            }
+        }
+    }
+
+    private func binding(for repo: String) -> Binding<Bool> {
+        Binding(
+            get: { selected.contains(repo) },
+            set: { isOn in
+                if isOn { selected.insert(repo) } else { selected.remove(repo) }
+            }
+        )
     }
 }
 
@@ -141,6 +249,11 @@ struct EnvironmentFooter: View {
 
     var body: some View {
         HStack(spacing: 16) {
+            if model.currentRunIsArmed {
+                Label("ARMED", systemImage: "bolt.fill")
+                    .foregroundStyle(.red)
+                    .fontWeight(.bold)
+            }
             Label("org \(model.settings.organisation)", systemImage: "building.2")
             Label(model.settings.useFixtureGitHub ? "Fixture data" : "Live GitHub",
                   systemImage: model.settings.useFixtureGitHub ? "shippingbox" : "network")

@@ -15,13 +15,21 @@ public final class JobCollector: @unchecked Sendable {
     private var logs: [String] = []
     private var auditEvents: [AuditEvent] = []
     private var state: [String: Any] = [:]
+    private var artifacts: [Artifact] = []
+    /// Armed runs: per-repo cursor into the reviewed reference plan, and the
+    /// repos where writing has stopped (conflict, drift, already-exists).
+    private var planCursors: [String: Int] = [:]
+    private var haltedRepos: Set<String> = []
+    private let referencePlan: [String: [PlannedAction]]
     private let targetRepos: Set<String>?
     private let onEvent: (RunEvent) -> Void
 
     public init(initialState: [String: String] = [:],
                 targetRepos: Set<String>? = nil,
+                referencePlan: [String: [PlannedAction]] = [:],
                 onEvent: @escaping (RunEvent) -> Void) {
         self.targetRepos = targetRepos
+        self.referencePlan = referencePlan
         self.onEvent = onEvent
         for (key, json) in initialState {
             guard let data = json.data(using: .utf8),
@@ -159,6 +167,47 @@ public final class JobCollector: @unchecked Sendable {
     public var snapshotPlan: [String: [PlannedAction]] {
         lock.lock(); defer { lock.unlock() }
         return plannedActions
+    }
+
+    // MARK: Armed writes (guarded live handle)
+
+    /// The next action the reviewed plan expects for this repo, or nil when
+    /// the plan is exhausted (or the repo was never planned).
+    public func expectedNextAction(repo: String) -> PlannedAction? {
+        lock.lock(); defer { lock.unlock() }
+        let cursor = planCursors[repo] ?? 0
+        guard let plan = referencePlan[repo], cursor < plan.count else { return nil }
+        return plan[cursor]
+    }
+
+    public func consumeNextAction(repo: String) {
+        lock.lock(); defer { lock.unlock() }
+        planCursors[repo] = (planCursors[repo] ?? 0) + 1
+    }
+
+    /// Stop writing to a repo (drift, plan deviation, artifact already
+    /// exists): records the status and refuses further writes there.
+    public func haltRepo(_ repo: String, status: RepoStatus, reason: String) {
+        lock.lock()
+        haltedRepos.insert(repo)
+        lock.unlock()
+        upsert(repo: self.repo(named: repo), status: status, reason: reason)
+    }
+
+    public func isHalted(_ repo: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return haltedRepos.contains(repo)
+    }
+
+    public func recordArtifact(_ artifact: Artifact) {
+        lock.lock()
+        artifacts.append(artifact)
+        lock.unlock()
+    }
+
+    public var snapshotArtifacts: [Artifact] {
+        lock.lock(); defer { lock.unlock() }
+        return artifacts
     }
 
     /// JSON-encoded state for persistence and cross-run hand-off.

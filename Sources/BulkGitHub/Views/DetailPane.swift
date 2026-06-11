@@ -49,6 +49,14 @@ struct DetailPane: View {
                         .help("Sets this repo as the canary target and switches to the update phase")
                     }
 
+                    // The artifact registry for this repo: what armed runs
+                    // actually created. Merge/cancel in later phases operate
+                    // only on these.
+                    let repoArtifacts = model.artifacts.filter { $0.repo == result.id }
+                    if !repoArtifacts.isEmpty {
+                        ArtifactsView(artifacts: repoArtifacts)
+                    }
+
                     // Plan or evidence, never both: once actions are planned,
                     // their diffs are the authoritative "what changes" — the
                     // match evidence below them just read as a second, confusing
@@ -79,6 +87,39 @@ struct DetailPane: View {
     private func open(_ urlString: String) {
         guard let url = URL(string: urlString) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// What armed runs created on the remote for this repository — branches and
+/// PRs the job holds receipts for.
+struct ArtifactsView: View {
+    let artifacts: [Artifact]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Created by armed runs", systemImage: "bolt.fill")
+                .font(.headline)
+                .foregroundStyle(.red)
+
+            ForEach(artifacts) { artifact in
+                HStack(spacing: 6) {
+                    Image(systemName: artifact.kind == .branch
+                            ? "arrow.triangle.branch" : "arrow.triangle.pull")
+                        .foregroundStyle(.secondary)
+                    Text("\(artifact.kind.rawValue) \(artifact.name)")
+                        .font(.callout)
+                    Spacer()
+                    if let url = artifact.url, let link = URL(string: url) {
+                        Link(destination: link) {
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .help(url)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

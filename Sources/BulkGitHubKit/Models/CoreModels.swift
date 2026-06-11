@@ -162,6 +162,8 @@ public struct Job: Codable, Identifiable, Sendable {
     /// promptsByPhase. `scriptSource`/`params` remain the legacy single slots.
     public var scriptsByPhase: [String: String]?
     public var paramsByPhase: [String: [String: String]]?
+    /// Everything armed runs of this job created on the remote.
+    public var artifacts: [Artifact]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {
@@ -237,6 +239,36 @@ public enum PlannedAction: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Artifacts (armed runs)
+
+/// Something an armed run actually created on the remote. The registry is the
+/// boundary of later phases' authority: merge and cancel operate ONLY on
+/// artifacts this job created — the app can never touch a branch or PR it
+/// doesn't hold a receipt for.
+public struct Artifact: Codable, Hashable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable {
+        case branch
+        case pullRequest = "pull request"
+    }
+
+    public var id: UUID
+    public var kind: Kind
+    public var repo: String
+    /// Branch name, or "#N" for a pull request.
+    public var name: String
+    public var url: String?
+    public var createdAt: Date
+
+    public init(kind: Kind, repo: String, name: String, url: String? = nil) {
+        self.id = UUID()
+        self.kind = kind
+        self.repo = repo
+        self.name = name
+        self.url = url
+        self.createdAt = Date()
+    }
+}
+
 // MARK: - Engine run types
 
 public enum RunEvent: Sendable {
@@ -271,6 +303,8 @@ public struct RunOutcome: Sendable {
     /// phase's run as initialState so update scripts can reuse check results
     /// instead of re-searching.
     public let state: [String: String]
+    /// Remote objects an armed run created (empty for dry runs and checks).
+    public let artifacts: [Artifact]
     public let duration: TimeInterval
 }
 

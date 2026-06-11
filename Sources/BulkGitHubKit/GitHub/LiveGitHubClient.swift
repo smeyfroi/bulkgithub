@@ -9,6 +9,12 @@ import Foundation
 public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     public typealias TokenProvider = @Sendable () -> String?
 
+    /// HARD KILL SWITCH for live writes. The armed workflow ships exercised
+    /// against fixture data only; flipping this requires a deliberate code
+    /// change and a release, not a settings toggle. Keep false until the
+    /// arming UX and drift guard have been shaken down end to end.
+    public static let liveWritesEnabled = false
+
     private let apiHost: URL
     private let tokenProvider: TokenProvider
     private let session: URLSession
@@ -231,6 +237,71 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
             return PullRequestRef(repo: repo, number: number, headRef: "", headSha: "",
                                   state: state, url: htmlURL)
         }
+    }
+
+    // MARK: Writes (hard-disabled via liveWritesEnabled)
+
+    /// Mutating request with a JSON body. Every caller checks the kill
+    /// switch before building one.
+    private func mutatingRequest(method: String, path: String,
+                                 body: [String: Any]) throws -> URLRequest {
+        var request = try request(path: path)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    public func createBranch(repo: String, name: String, fromSha: String) async throws -> String {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        let json = try await fetchJSON(try mutatingRequest(
+            method: "POST", path: "repos/\(repo)/git/refs",
+            body: ["ref": "refs/heads/\(name)", "sha": fromSha]))
+        guard let dict = json as? [String: Any],
+              let object = dict["object"] as? [String: Any],
+              let sha = object["sha"] as? String else {
+            throw GitHubClientError.invalidResponse("create-ref API returned unexpected shape")
+        }
+        return sha
+    }
+
+    public func putContent(repo: String, path: String, content: String,
+                           branch: String, message: String) async throws -> String {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        // The contents API needs the existing blob sha when updating.
+        var body: [String: Any] = [
+            "message": message,
+            "content": Data(content.utf8).base64EncodedString(),
+            "branch": branch,
+        ]
+        let existing = try await fetchJSON(
+            try request(path: "repos/\(repo)/contents/\(path)",
+                        query: [URLQueryItem(name: "ref", value: branch)]),
+            allow404: true)
+        if let dict = existing as? [String: Any], let sha = dict["sha"] as? String {
+            body["sha"] = sha
+        }
+        let json = try await fetchJSON(try mutatingRequest(
+            method: "PUT", path: "repos/\(repo)/contents/\(path)", body: body))
+        guard let dict = json as? [String: Any],
+              let commit = dict["commit"] as? [String: Any],
+              let sha = commit["sha"] as? String else {
+            throw GitHubClientError.invalidResponse("contents API returned unexpected shape for \(path)")
+        }
+        return sha
+    }
+
+    public func createPR(repo: String, head: String, base: String,
+                         title: String, body: String) async throws -> PullRequestRef {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        let json = try await fetchJSON(try mutatingRequest(
+            method: "POST", path: "repos/\(repo)/pulls",
+            body: ["title": title, "head": head, "base": base, "body": body]))
+        guard let dict = json as? [String: Any],
+              let pr = Self.pullRequest(from: dict, repo: repo) else {
+            throw GitHubClientError.invalidResponse("pulls API returned unexpected shape")
+        }
+        return pr
     }
 
     private static func pullRequest(from json: [String: Any], repo: String) -> PullRequestRef? {
