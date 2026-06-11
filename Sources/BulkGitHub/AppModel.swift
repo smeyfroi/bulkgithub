@@ -65,6 +65,17 @@ final class AppModel {
     /// True while an ARMED run is executing — drives the loud mode banner.
     var currentRunIsArmed = false
     var showApplySheet = false
+    /// The user-set write mode for the current phase: with it OFF, Run is a
+    /// dry run; with it ON, Run applies the reviewed plan (via the
+    /// confirmation sheet). Snaps back to dry run after every armed run and
+    /// on any context change — each write is a deliberate act, never a
+    /// sticky default. Never persisted.
+    var writeArmed = false
+    /// Write mode requires something reviewed to apply: a plan from this
+    /// phase's dry run, not invalidated by script edits.
+    var canArmWrites: Bool {
+        phase != .check && !activePlan.isEmpty && !resultsAreStale
+    }
     var generating = false
     var validating = false
     var selectedRepo: String?
@@ -319,6 +330,7 @@ final class AppModel {
         quotaText = nil
         logs = []
         auditEvents = []
+        writeArmed = false
         statusLine = settings.useFixtureGitHub
             ? "Switched to fixture data — workflow state cleared, scripts kept"
             : "Switched to LIVE GitHub — workflow state cleared, scripts kept"
@@ -351,6 +363,7 @@ final class AppModel {
         stashWorkspace()
         phase = newPhase
         restoreWorkspace()
+        writeArmed = false
         switch newPhase {
         case .check:
             statusLine = "Check phase — prompts generate read-only search scripts"
@@ -380,6 +393,7 @@ final class AppModel {
             stashWorkspace()
             phase = recipe.phase
         }
+        writeArmed = false
         scriptText = source
         prompt = recipe.prompt
         promptsByPhase[recipe.phase] = recipe.prompt
@@ -559,6 +573,9 @@ final class AppModel {
         defer {
             running = false
             currentRunIsArmed = false
+            // Write mode is per-run: it never survives the run that used it
+            // (or a dry run started while it was somehow on).
+            writeArmed = false
         }
         let runPhase = validated.meta.phase
         let runScript = scriptText

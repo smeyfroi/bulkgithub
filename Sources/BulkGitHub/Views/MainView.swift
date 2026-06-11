@@ -74,30 +74,38 @@ struct MainView: View {
                         }
                         .help("Cancel the run — pending operations are abandoned")
                     } else {
-                        Button {
-                            model.run()
-                        } label: {
-                            // Effectful phases say what they do: a plain
-                            // "Run" must never read as "this writes".
-                            Label(model.phase == .check ? "Run" : "Dry Run",
-                                  systemImage: "play.fill")
+                        // The run mode is an explicit, visible toggle — not
+                        // an implication of which button you found. Check is
+                        // always read-only, so it has no toggle. Write only
+                        // unlocks once a fresh reviewed plan exists, and
+                        // snaps back to Dry Run after every armed run.
+                        if model.phase != .check {
+                            Picker("Mode", selection: $model.writeArmed) {
+                                Text("Dry Run").tag(false)
+                                Text("Write").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!model.canArmWrites && !model.writeArmed)
+                            .help(model.canArmWrites
+                                    ? "Dry Run records a reviewable plan; Write applies the reviewed plan to selected repos"
+                                    : "Write unlocks after a dry run produces a plan (and the script hasn't changed since)")
                         }
-                        .help(model.phase == .check
-                                ? "Validate and run the script (check phase is read-only)"
-                                : "Run the script in dry-run mode — writes are recorded as a reviewable plan, nothing reaches GitHub")
+
+                        Button {
+                            if model.writeArmed {
+                                model.showApplySheet = true
+                            } else {
+                                model.run()
+                            }
+                        } label: {
+                            Label(buttonTitle, systemImage: model.writeArmed ? "bolt.fill" : "play.fill")
+                                .foregroundStyle(model.writeArmed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                        }
+                        .help(buttonHelp)
                         // Generation streams into the editor, so running
                         // mid-generation would execute a truncated script.
-                        .disabled(model.scriptText.isEmpty || model.validating || model.generating)
-
-                        if model.phase != .check, !model.activePlan.isEmpty {
-                            Button {
-                                model.showApplySheet = true
-                            } label: {
-                                Label("Apply…", systemImage: "bolt.fill")
-                            }
-                            .help("Arm writes: re-run the reviewed plan for selected repositories")
-                            .disabled(model.validating || model.generating || model.resultsAreStale)
-                        }
+                        .disabled(model.scriptText.isEmpty || model.validating || model.generating
+                                  || (model.writeArmed && !model.canArmWrites))
                     }
                 }
             }
@@ -110,6 +118,20 @@ struct MainView: View {
         .onChange(of: model.settings.useFixtureGitHub) {
             model.dataSourceChanged()
         }
+    }
+
+    private var buttonTitle: String {
+        if model.writeArmed { return "Apply…" }
+        return model.phase == .check ? "Run" : "Dry Run"
+    }
+
+    private var buttonHelp: String {
+        if model.writeArmed {
+            return "Apply the reviewed plan: choose repositories and confirm — this writes"
+        }
+        return model.phase == .check
+            ? "Validate and run the script (check phase is read-only)"
+            : "Run the script in dry-run mode — writes are recorded as a reviewable plan, nothing is written"
     }
 }
 

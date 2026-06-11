@@ -85,16 +85,25 @@ struct ScriptPane: View {
     }
 }
 
-/// It must always be obvious whether update writes are real: a full-width
-/// banner above the workspace, purple for dry-run, red while ARMED.
+/// Reflects the user-set run mode (the Dry Run / Write toggle) — a real mode,
+/// not an implication of which button exists. Purple for dry run, red the
+/// moment Write is selected, louder still while an armed run executes.
 struct WriteModeBanner: View {
     @Environment(AppModel.self) private var model
+
+    private var target: String {
+        model.settings.useFixtureGitHub ? "fixture data" : "LIVE GitHub (org \(model.settings.organisation))"
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             if model.currentRunIsArmed {
                 Image(systemName: "bolt.fill")
-                Text("ARMED — the reviewed plan is being applied (writes go to \(model.settings.useFixtureGitHub ? "fixture data" : "GitHub"))")
+                Text("WRITING — the reviewed plan is being applied to \(target)")
+                    .fontWeight(.semibold)
+            } else if model.writeArmed {
+                Image(systemName: "bolt.fill")
+                Text("WRITE MODE — \"Apply…\" runs the reviewed plan against \(target) for the repos you select")
                     .fontWeight(.semibold)
             } else {
                 Image(systemName: "shield.lefthalf.filled")
@@ -105,13 +114,15 @@ struct WriteModeBanner: View {
             Spacer()
         }
         .font(.callout)
-        .foregroundStyle(model.currentRunIsArmed ? Color.red : Color.purple)
+        .foregroundStyle(isWrite ? Color.red : Color.purple)
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
-        .background((model.currentRunIsArmed ? Color.red : Color.purple).opacity(0.10))
+        .background((isWrite ? Color.red : Color.purple).opacity(isWrite ? 0.14 : 0.10))
         .overlay(alignment: .bottom) { Divider() }
     }
+
+    private var isWrite: Bool { model.writeArmed || model.currentRunIsArmed }
 }
 
 /// Editable parameters surfaced from the script's meta.params — tweak a job
