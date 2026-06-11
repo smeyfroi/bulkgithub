@@ -49,14 +49,19 @@ struct DetailPane: View {
                         .help("Sets this repo as the canary target and switches to the update phase")
                     }
 
+                    // Plan or evidence, never both: once actions are planned,
+                    // their diffs are the authoritative "what changes" — the
+                    // match evidence below them just read as a second, confusing
+                    // set of diffs. Evidence remains the detail for check
+                    // results and for update repos with nothing planned.
                     if model.phase == .update,
                        let actions = model.plannedActions[result.id], !actions.isEmpty {
                         PlanView(actions: actions)
-                    }
-
-                    ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, evidence in
-                        EvidenceView(evidence: evidence, repo: result.repo,
-                                     webHost: model.settings.webHost)
+                    } else {
+                        ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, evidence in
+                            EvidenceView(evidence: evidence, repo: result.repo,
+                                         webHost: model.settings.webHost)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
