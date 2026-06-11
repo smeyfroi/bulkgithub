@@ -413,9 +413,19 @@ final class AppModel {
         }
         let runPhase = validated.meta.phase
         let runScript = scriptText
-        // A fresh check supersedes the canary choice — it was picked from the
-        // previous result set.
-        if runPhase == .check { canaryRepo = "" }
+        // A fresh check starts a fresh funnel: the canary, the update
+        // results, and the dry-run plan were all derived from the check
+        // results this run replaces — carrying them forward made the update
+        // table open on outdated statuses (and a misleading stale banner).
+        // The update SCRIPT survives; it is reusable against the new results.
+        // The artifact registry is never cleared — those are receipts for
+        // things armed runs really created.
+        if runPhase == .check {
+            canaryRepo = ""
+            resultsByPhase[.update] = []
+            ranScriptByPhase[.update] = nil
+            plannedActions = [:]
+        }
         runGeneration += 1
         let generation = runGeneration
         resultsByPhase[runPhase] = []
