@@ -39,6 +39,20 @@ public enum ResourceLocator {
         string(at: "bulkgh.update.d.ts")
     }
 
+    /// Merge-phase additions: registry-scoped merge/close/delete surface.
+    public static var mergeDeclaration: String? {
+        string(at: "bulkgh.merge.d.ts")
+    }
+
+    /// The phase-appropriate extra declaration (nil for check).
+    public static func extraDeclaration(for phase: JobPhase) -> String? {
+        switch phase {
+        case .check: return nil
+        case .update: return updateDeclaration
+        case .merge: return mergeDeclaration
+        }
+    }
+
     /// A bundled recipe by file name (without extension).
     public static func recipe(named name: String) -> String? {
         string(at: "recipes/\(name).ts")

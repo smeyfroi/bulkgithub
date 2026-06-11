@@ -62,8 +62,8 @@ struct DetailPane: View {
                     // match evidence below them just read as a second, confusing
                     // set of diffs. Evidence remains the detail for check
                     // results and for update repos with nothing planned.
-                    if model.phase == .update,
-                       let actions = model.plannedActions[result.id], !actions.isEmpty {
+                    if model.phase != .check,
+                       let actions = model.activePlan[result.id], !actions.isEmpty {
                         PlanView(actions: actions)
                     } else {
                         ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, evidence in
@@ -155,9 +155,10 @@ struct PlannedActionView: View {
             switch action {
             case .putContent(_, _, _, let before, let after):
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
-            case .createPR, .createBranch:
-                // The summary line is enough — the putContent diffs above
-                // already show what the PR will contain.
+            default:
+                // The summary line is enough for the rest — putContent diffs
+                // above already show what a PR will contain, and merge-phase
+                // actions are fully described by their summaries.
                 EmptyView()
             }
         }
@@ -170,6 +171,9 @@ struct PlannedActionView: View {
         case .createBranch: return "arrow.triangle.branch"
         case .putContent: return "pencil.line"
         case .createPR: return "arrow.triangle.pull"
+        case .mergePR: return "arrow.triangle.merge"
+        case .closePR: return "xmark.circle"
+        case .deleteBranch: return "trash"
         }
     }
 }

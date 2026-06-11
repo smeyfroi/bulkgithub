@@ -43,9 +43,19 @@ final class AppModel {
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
     var plannedActions: [String: [PlannedAction]] = [:]
+    /// The phase whose dry run produced plannedActions: the update plan must
+    /// not leak into the merge phase's Apply flow (and vice versa).
+    var plannedActionsPhase: JobPhase?
+    /// The reviewed plan, visible only in the phase that produced it.
+    var activePlan: [String: [PlannedAction]] {
+        plannedActionsPhase == phase ? plannedActions : [:]
+    }
     /// Remote objects armed runs of this job created (the artifact registry —
     /// later phases' merge/cancel operate only on these).
     var artifacts: [Artifact] = []
+    /// Per-PR merge approvals, capturing the head SHA approved. Merging
+    /// requires the head to still match — host-enforced.
+    var approvals: [Approval] = []
     var statusLine: String = "Ready"
     var running = false
     /// True while an ARMED run is executing — drives the loud mode banner.
@@ -98,10 +108,13 @@ final class AppModel {
                 logs = job.logs
                 auditEvents = job.auditEvents
                 plannedActions = job.plannedActions ?? [:]
+                plannedActionsPhase = job.planPhase.flatMap(JobPhase.init(rawValue:))
+                    ?? (plannedActions.isEmpty ? nil : .update)  // legacy saves were update-only
                 jobState = job.state ?? [:]
                 prTitle = job.prTitle ?? ""
                 canaryRepo = job.canaryRepo ?? ""
                 artifacts = job.artifacts ?? []
+                approvals = job.approvals ?? []
                 statusLine = job.lastRunStatus ?? "Restored previous job"
             }
         }
@@ -159,6 +172,60 @@ final class AppModel {
         var id: String { repo.fullName }
     }
 
+    /// One row of the merge table: a job PR artifact, its approval state,
+    /// and any merge-run outcome.
+    struct MergeRow: Identifiable {
+        let artifact: Artifact
+        let repo: RepoRef
+        let number: Int
+        let approved: Bool
+        let result: RepoResult?
+        var id: String { artifact.repo }
+    }
+
+    var mergeRows: [MergeRow] {
+        let results = resultsByPhase[.merge] ?? []
+        // One row per repo, latest artifact wins — stale registry entries
+        // from an earlier session must not produce duplicate rows.
+        var byRepo: [String: MergeRow] = [:]
+        var order: [String] = []
+        for artifact in artifacts where artifact.kind == .pullRequest {
+            guard let number = Int(artifact.name.dropFirst()) else { continue }
+            if byRepo[artifact.repo] == nil { order.append(artifact.repo) }
+            let result = results.first { $0.id == artifact.repo }
+            byRepo[artifact.repo] = MergeRow(
+                artifact: artifact,
+                repo: result?.repo ?? RepoRef(fullName: artifact.repo),
+                number: number,
+                approved: approvals.contains {
+                    $0.repo == artifact.repo && $0.prNumber == number
+                },
+                result: result)
+        }
+        return order.compactMap { byRepo[$0] }
+    }
+
+    /// Approve (capturing the current head SHA) or withdraw approval.
+    func toggleApproval(repo: String, prNumber: Int) {
+        if let index = approvals.firstIndex(where: { $0.repo == repo && $0.prNumber == prNumber }) {
+            approvals.remove(at: index)
+            statusLine = "Approval withdrawn for PR #\(prNumber) in \(repo)"
+            saveNow()
+            return
+        }
+        let client = githubClient()
+        Task {
+            do {
+                let pr = try await client.getPR(repo: repo, number: prNumber)
+                approvals.append(Approval(repo: repo, prNumber: prNumber, headSha: pr.headSha))
+                statusLine = "Approved PR #\(prNumber) in \(repo) at \(String(pr.headSha.prefix(12))) — merging requires the head to still match"
+                saveNow()
+            } catch {
+                statusLine = "Could not approve PR #\(prNumber): \(error.localizedDescription)"
+            }
+        }
+    }
+
     var updateRows: [UpdateRow] {
         let checks = resultsByPhase[.check] ?? []
         let updates = resultsByPhase[.update] ?? []
@@ -176,15 +243,22 @@ final class AppModel {
     }
 
     /// Row count for the status footer — the update table includes carried
-    /// check rows, not just update results.
+    /// check rows, and the merge table shows registry PRs.
     var visibleRowCount: Int {
-        phase == .update ? updateRows.count : results.count
+        switch phase {
+        case .check: return results.count
+        case .update: return updateRows.count
+        case .merge: return mergeRows.count
+        }
     }
 
     func clearResults() {
         resultsByPhase[phase] = []
         ranScriptByPhase[phase] = nil
-        if phase == .update { plannedActions = [:] }
+        if plannedActionsPhase == phase {
+            plannedActions = [:]
+            plannedActionsPhase = nil
+        }
         selectedRepo = nil
         statusLine = "Results cleared"
     }
@@ -210,7 +284,7 @@ final class AppModel {
         case .update:
             statusLine = "Update phase — prompts generate dry-run update scripts (nothing reaches GitHub)"
         case .merge:
-            statusLine = "Merge phase arrives in a later release"
+            statusLine = "Merge phase — approve job PRs in the table, then dry-run a merge script (it can only touch this job's PRs and branches)"
         }
     }
 
@@ -252,8 +326,13 @@ final class AppModel {
 
     // MARK: Client selection
 
+    /// ONE fixture instance per app session: armed-run writes (branches, PRs)
+    /// must survive into the merge phase or the loop can't be rehearsed —
+    /// a fresh demo() per call silently discarded them.
+    @ObservationIgnored private lazy var fixtureClient = FixtureGitHubClient.demo()
+
     func githubClient() -> GitHubClient {
-        if settings.useFixtureGitHub { return FixtureGitHubClient.demo() }
+        if settings.useFixtureGitHub { return fixtureClient }
         let credentials = self.credentials
         return LiveGitHubClient(apiHost: settings.apiHost,
                                 tokenProvider: { credentials.read(.githubToken) },
@@ -393,8 +472,9 @@ final class AppModel {
     /// live client additionally has writes hard-disabled in this build, so
     /// armed runs are only possible against fixture data.
     func applyPlan(to repoIDs: Set<String>) {
-        guard !running, !generating, phase == .update else { return }
-        guard !repoIDs.isEmpty, !plannedActions.isEmpty else { return }
+        guard !running, !generating, phase == .update || phase == .merge else { return }
+        guard !repoIDs.isEmpty, !plannedActions.isEmpty,
+              plannedActionsPhase == phase else { return }
         guard settings.useFixtureGitHub else {
             statusLine = "Live GitHub writes are disabled in this build — armed runs work against fixture data only"
             return
@@ -425,6 +505,7 @@ final class AppModel {
             resultsByPhase[.update] = []
             ranScriptByPhase[.update] = nil
             plannedActions = [:]
+            plannedActionsPhase = nil
         }
         runGeneration += 1
         let generation = runGeneration
@@ -433,7 +514,10 @@ final class AppModel {
         auditEvents = []
         // The reviewed plan survives an armed run — it is the reference the
         // engine checked the writes against.
-        if runPhase == .update, writeMode == .dryRun { plannedActions = [:] }
+        if runPhase != .check, writeMode == .dryRun {
+            plannedActions = [:]
+            plannedActionsPhase = nil
+        }
         statusLine = writeMode == .armed ? "ARMED — applying the reviewed plan…" : "Running…"
         var params = paramsDraft
         if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
@@ -450,6 +534,12 @@ final class AppModel {
                 let fullName = canary.contains("/") ? canary : "\(settings.organisation)/\(canary)"
                 configuration.targetRepos = [fullName]
             }
+        }
+        if runPhase == .merge {
+            // Merge scripts see only the job's own artifacts, and merging
+            // requires these user approvals (host-enforced).
+            configuration.artifactRegistry = artifacts
+            configuration.approvals = approvals
         }
         let outcome = await engine.run(javaScript: validated.javaScript,
                                        phase: runPhase,
@@ -471,11 +561,30 @@ final class AppModel {
         ranScriptByPhase[runPhase] = runScript
         logs = outcome.logs
         auditEvents = outcome.auditEvents
-        if runPhase == .update, writeMode == .dryRun {
+        if runPhase != .check, writeMode == .dryRun {
             plannedActions = outcome.plannedActions
+            plannedActionsPhase = outcome.plannedActions.isEmpty ? nil : runPhase
         }
-        if !outcome.artifacts.isEmpty {
-            artifacts.append(contentsOf: outcome.artifacts)
+        // Replace rather than accumulate: re-applying after a halt (or in a
+        // fresh fixture session) must not leave duplicate receipts for the
+        // same branch or PR.
+        for artifact in outcome.artifacts {
+            artifacts.removeAll {
+                $0.kind == artifact.kind && $0.repo == artifact.repo && $0.name == artifact.name
+            }
+            artifacts.append(artifact)
+        }
+        // A merged or cancelled repo's artifacts are consumed: its PR is no
+        // longer open and its branch is gone — drop them (and their
+        // approvals) from the registry. The audit trail keeps the history.
+        if writeMode == .armed, runPhase == .merge {
+            let consumed = Set(outcome.results
+                .filter { [.merged, .cancelled].contains($0.status) }
+                .map(\.id))
+            if !consumed.isEmpty {
+                artifacts.removeAll { consumed.contains($0.repo) }
+                approvals.removeAll { consumed.contains($0.repo) }
+            }
         }
         if !outcome.state.isEmpty {
             jobState.merge(outcome.state) { _, new in new }
@@ -485,12 +594,15 @@ final class AppModel {
             logs.append("◆ GitHub \(quotaText) requests remaining")
         }
         if writeMode == .armed {
-            let raised = outcome.results.filter { $0.status == .prRaised }
-            let halted = outcome.results.filter {
-                [.conflicted, .branchExists, .prExists].contains($0.status)
+            let acted = outcome.results.filter {
+                [.prRaised, .merged, .cancelled].contains($0.status)
             }
-            if selectedRepo == nil { selectedRepo = raised.first?.id }
-            var summary = "ARMED run \(outcome.status.label) — \(raised.count) PR(s) raised"
+            let halted = outcome.results.filter {
+                [.conflicted, .branchExists, .prExists, .blocked].contains($0.status)
+            }
+            if selectedRepo == nil { selectedRepo = acted.first?.id }
+            let verb = runPhase == .merge ? "PR(s) merged or closed" : "PR(s) raised"
+            var summary = "ARMED run \(outcome.status.label) — \(acted.count) \(verb)"
             if !halted.isEmpty { summary += ", \(halted.count) halted (see results)" }
             statusLine = summary
         } else {
@@ -547,10 +659,12 @@ final class AppModel {
         job.logs = logs
         job.auditEvents = auditEvents
         job.plannedActions = plannedActions
+        job.planPhase = plannedActionsPhase?.rawValue
         job.state = jobState
         job.prTitle = prTitle
         job.canaryRepo = canaryRepo
         job.artifacts = artifacts
+        job.approvals = approvals
         job.promptsByPhase = Self.rawKeyed(promptsByPhase)
         job.lastRunStatus = statusLine
         try? store.save(AppStateSnapshot(settings: settings, job: job))

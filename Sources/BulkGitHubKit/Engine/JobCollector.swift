@@ -22,14 +22,20 @@ public final class JobCollector: @unchecked Sendable {
     private var haltedRepos: Set<String> = []
     private let referencePlan: [String: [PlannedAction]]
     private let targetRepos: Set<String>?
+    private let artifactRegistry: [Artifact]
+    private let approvals: [Approval]
     private let onEvent: (RunEvent) -> Void
 
     public init(initialState: [String: String] = [:],
                 targetRepos: Set<String>? = nil,
                 referencePlan: [String: [PlannedAction]] = [:],
+                artifactRegistry: [Artifact] = [],
+                approvals: [Approval] = [],
                 onEvent: @escaping (RunEvent) -> Void) {
         self.targetRepos = targetRepos
         self.referencePlan = referencePlan
+        self.artifactRegistry = artifactRegistry
+        self.approvals = approvals
         self.onEvent = onEvent
         for (key, json) in initialState {
             guard let data = json.data(using: .utf8),
@@ -208,6 +214,32 @@ public final class JobCollector: @unchecked Sendable {
     public var snapshotArtifacts: [Artifact] {
         lock.lock(); defer { lock.unlock() }
         return artifacts
+    }
+
+    // MARK: Merge phase: registry scoping and approvals
+
+    /// PR artifacts in the job's registry as (repo, number) pairs, deduped —
+    /// re-applied runs can leave duplicate receipts for the same PR.
+    public var registryPRs: [(repo: String, number: Int)] {
+        var seen = Set<String>()
+        return artifactRegistry.compactMap { artifact in
+            guard artifact.kind == .pullRequest,
+                  let number = Int(artifact.name.dropFirst()),
+                  seen.insert("\(artifact.repo)#\(number)").inserted else { return nil }
+            return (artifact.repo, number)
+        }
+    }
+
+    public func isRegistryPR(repo: String, number: Int) -> Bool {
+        registryPRs.contains { $0.repo == repo && $0.number == number }
+    }
+
+    public func isRegistryBranch(repo: String, name: String) -> Bool {
+        artifactRegistry.contains { $0.kind == .branch && $0.repo == repo && $0.name == name }
+    }
+
+    public func approval(repo: String, number: Int) -> Approval? {
+        approvals.first { $0.repo == repo && $0.prNumber == number }
     }
 
     /// JSON-encoded state for persistence and cross-run hand-off.

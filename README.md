@@ -101,8 +101,23 @@ credentials are stored (Keychain only; scripts can never read them).
 - [ ] Enable live writes once the workflow has been exercised
 - [ ] Resume semantics for partially-applied repos (currently: halt safely)
 
-Phase 5 (guarded merge and cancel) is specified in plan v2 and not yet
-implemented.
+## Phase 5 status (guarded merge and cancel — writes still hard-disabled)
+
+- [x] Registry-scoped merge surface (`bulkgh.merge.d.ts`): `listJobPRs` /
+      `mergePR` / `closePR` / `deleteBranch` exist only for merge-phase
+      scripts and can only touch branches and PRs THIS job created
+- [x] Approval queue: per-PR approval in the merge table captures the head
+      SHA; merging requires the approval AND that the head still matches —
+      an approval is for a specific state of the branch (host-enforced in
+      dry-run too, so drift surfaces at review time)
+- [x] Squash merges only, with GitHub's own `sha` precondition on the live
+      client; cancel flow closes job PRs and deletes job branches
+- [x] Merge scripts dry-run by default like updates: reviewable plan, then
+      the same Apply… arming flow; consumed artifacts leave the registry
+- [x] Recipes: "Merge approved PRs" and "Cancel job"; full loop rehearsed
+      offline — check → update → apply → approve → merge/cancel — against
+      the stateful fixture client
+- [ ] Live merge writes (same kill switch as phase 4)
 
 ## License
 

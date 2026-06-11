@@ -35,6 +35,12 @@ public struct EngineConfiguration: Sendable {
     /// PR) halts that repo as conflicted with nothing further written.
     public var referencePlan: [String: [PlannedAction]] = [:]
 
+    /// Merge phase: the job's artifact registry — the only branches and PRs
+    /// merge scripts may touch (host-enforced).
+    public var artifactRegistry: [Artifact] = []
+    /// Merge phase: the user's per-PR approvals with the head SHA approved.
+    public var approvals: [Approval] = []
+
     public init() {}
 
     public init(settings: AppSettings) {
@@ -76,6 +82,8 @@ public final class ScriptEngine {
         let collector = JobCollector(initialState: initialState,
                                      targetRepos: configuration.targetRepos,
                                      referencePlan: configuration.referencePlan,
+                                     artifactRegistry: configuration.artifactRegistry,
+                                     approvals: configuration.approvals,
                                      onEvent: onEvent)
         let cancel = CancelBox()
         let limiter = AsyncSemaphore(configuration.maxConcurrentHostCalls)
@@ -93,8 +101,8 @@ public final class ScriptEngine {
 
         // Armed runs have hard preconditions — refuse rather than guess.
         if configuration.writeMode == .armed {
-            guard phase == .update else {
-                return outcome(.failed("armed write mode is only valid for update-phase scripts"))
+            guard phase == .update || phase == .merge else {
+                return outcome(.failed("armed write mode is only valid for update or merge scripts"))
             }
             guard let targets = configuration.targetRepos, !targets.isEmpty else {
                 return outcome(.failed("armed runs require an explicit selection of target repos"))

@@ -127,6 +127,12 @@ public enum PromptLibrary {
     it with gh.getRepo when you only have a name (searchCode results and \
     repo names carried in job state do not have a reliable defaultBranch). \
     Build refs as "heads/" + defaultBranch.
+    17. Merge scripts (phase "merge") operate ONLY on this job's artifacts: \
+    start from gh.listJobPRs (the registry), merge with the headSha those \
+    results carry as expectedHeadSha, and delete a branch only after its PR \
+    is merged or closed. Merging requires the user's in-app approval — the \
+    host refuses unapproved PRs and heads that moved since approval. All \
+    merges are squash merges; there is no other method.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {

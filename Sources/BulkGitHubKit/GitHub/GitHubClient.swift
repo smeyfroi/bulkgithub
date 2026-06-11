@@ -58,4 +58,15 @@ public protocol GitHubClient: Sendable {
     /// Open a pull request from head into base.
     func createPR(repo: String, head: String, base: String,
                   title: String, body: String) async throws -> PullRequestRef
+
+    // MARK: Merge phase (phase 5) — the engine's merge bindings restrict
+    // these to the job's own artifact registry before any call is made.
+
+    /// One PR's current state (read — used for approvals and preconditions).
+    func getPR(repo: String, number: Int) async throws -> PullRequestRef
+    /// Squash-merge; the expected head SHA is a hard precondition (the API
+    /// rejects when the branch moved). Returns the merge commit SHA.
+    func mergePR(repo: String, number: Int, expectedHeadSha: String) async throws -> String
+    func closePR(repo: String, number: Int) async throws
+    func deleteBranch(repo: String, name: String) async throws
 }

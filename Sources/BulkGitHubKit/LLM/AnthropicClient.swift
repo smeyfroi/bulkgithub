@@ -143,8 +143,8 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
         guard var apiDeclaration = ResourceLocator.apiDeclaration else {
             throw LLMClientError.invalidResponse("bulkgh.d.ts missing from bundle")
         }
-        if context.phase == .update, let update = ResourceLocator.updateDeclaration {
-            apiDeclaration += "\n\n" + update
+        if let extra = ResourceLocator.extraDeclaration(for: context.phase) {
+            apiDeclaration += "\n\n" + extra
         }
         var body: [String: Any] = [
             "model": model,

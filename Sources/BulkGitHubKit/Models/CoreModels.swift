@@ -146,6 +146,8 @@ public struct Job: Codable, Identifiable, Sendable {
     public var lastRunStatus: String?
     /// Optional so pre-phase-3 saved state still decodes.
     public var plannedActions: [String: [PlannedAction]]?
+    /// Which phase's dry run produced plannedActions (JobPhase rawValue).
+    public var planPhase: String?
     /// Cross-phase job state (writeState/readState), JSON-encoded per key.
     public var state: [String: String]?
     /// Prompt per phase — switching phases must not carry prompts across.
@@ -164,6 +166,8 @@ public struct Job: Codable, Identifiable, Sendable {
     public var paramsByPhase: [String: [String: String]]?
     /// Everything armed runs of this job created on the remote.
     public var artifacts: [Artifact]?
+    /// User approvals of job PRs for merging (merge phase).
+    public var approvals: [Approval]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {
@@ -226,6 +230,10 @@ public enum PlannedAction: Codable, Hashable, Sendable {
     case putContent(path: String, branch: String, message: String,
                     before: String?, after: String)
     case createPR(headRef: String, title: String, body: String)
+    // Merge phase (phase 5): these operate only on the job's own artifacts.
+    case mergePR(number: Int, expectedHeadSha: String)
+    case closePR(number: Int)
+    case deleteBranch(name: String)
 
     public var summary: String {
         switch self {
@@ -235,7 +243,32 @@ public enum PlannedAction: Codable, Hashable, Sendable {
             return before == nil ? "Create \(path) on \(branch)" : "Update \(path) on \(branch)"
         case .createPR(let head, let title, _):
             return "Open PR \"\(title)\" from \(head)"
+        case .mergePR(let number, let sha):
+            return "Squash-merge PR #\(number) at \(String(sha.prefix(12)))"
+        case .closePR(let number):
+            return "Close PR #\(number) without merging"
+        case .deleteBranch(let name):
+            return "Delete branch \(name)"
         }
+    }
+}
+
+/// A user's explicit approval of one job-created PR for merging, capturing
+/// the head SHA they approved. Merging later requires the head to still
+/// match — an approval is for a specific state of the branch, not forever.
+public struct Approval: Codable, Hashable, Sendable, Identifiable {
+    public var repo: String
+    public var prNumber: Int
+    public var headSha: String
+    public var approvedAt: Date
+
+    public var id: String { "\(repo)#\(prNumber)" }
+
+    public init(repo: String, prNumber: Int, headSha: String) {
+        self.repo = repo
+        self.prNumber = prNumber
+        self.headSha = headSha
+        self.approvedAt = Date()
     }
 }
 

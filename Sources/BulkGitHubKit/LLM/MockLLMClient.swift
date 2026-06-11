@@ -12,8 +12,15 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         // like the real client's system prompt does; keywords only refine the
         // recipe choice within the check phase.
         switch context.phase {
-        case .update, .merge:
+        case .update:
             return try lineRemovalScript(for: prompt)
+        case .merge:
+            let recipe = prompt.range(of: "cancel", options: .caseInsensitive) != nil
+                ? "cancel_job" : "merge_approved_prs"
+            guard let script = ResourceLocator.recipe(named: recipe) else {
+                throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+            }
+            return script
         case .check:
             if prompt.range(of: "contains", options: .caseInsensitive) != nil {
                 return try stringScanScript(for: prompt)

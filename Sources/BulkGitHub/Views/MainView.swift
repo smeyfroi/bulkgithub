@@ -77,19 +77,19 @@ struct MainView: View {
                         Button {
                             model.run()
                         } label: {
-                            // The update phase says what it does: a plain
+                            // Effectful phases say what they do: a plain
                             // "Run" must never read as "this writes".
-                            Label(model.phase == .update ? "Dry Run" : "Run",
+                            Label(model.phase == .check ? "Run" : "Dry Run",
                                   systemImage: "play.fill")
                         }
-                        .help(model.phase == .update
-                                ? "Run the update script in dry-run mode — writes are recorded as a reviewable plan, nothing reaches GitHub"
-                                : "Validate and run the script (check phase is read-only)")
+                        .help(model.phase == .check
+                                ? "Validate and run the script (check phase is read-only)"
+                                : "Run the script in dry-run mode — writes are recorded as a reviewable plan, nothing reaches GitHub")
                         // Generation streams into the editor, so running
                         // mid-generation would execute a truncated script.
                         .disabled(model.scriptText.isEmpty || model.validating || model.generating)
 
-                        if model.phase == .update, !model.plannedActions.isEmpty {
+                        if model.phase != .check, !model.activePlan.isEmpty {
                             Button {
                                 model.showApplySheet = true
                             } label: {
@@ -117,7 +117,7 @@ struct ApplySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []
 
-    private var plannedRepos: [String] { model.plannedActions.keys.sorted() }
+    private var plannedRepos: [String] { model.activePlan.keys.sorted() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -154,7 +154,7 @@ struct ApplySheet: View {
                         }
                     }
                     Spacer()
-                    Text("\(model.plannedActions[repo]?.count ?? 0) action(s)")
+                    Text("\(model.activePlan[repo]?.count ?? 0) action(s)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -181,7 +181,7 @@ struct ApplySheet: View {
         .onAppear {
             // Canary-first: preselect just the canary when it has a plan,
             // otherwise everything planned.
-            if !model.canaryRepo.isEmpty, model.plannedActions[model.canaryRepo] != nil {
+            if !model.canaryRepo.isEmpty, model.activePlan[model.canaryRepo] != nil {
                 selected = [model.canaryRepo]
             } else {
                 selected = Set(plannedRepos)
@@ -212,9 +212,8 @@ struct SidebarView: View {
                     .tag(JobPhase.update)
                     .help("Prompts generate dry-run update scripts — nothing reaches GitHub")
                 Label("Merge", systemImage: "arrow.triangle.merge")
-                    .foregroundStyle(.tertiary)
-                    .selectionDisabled()
-                    .help("Later phase — guarded merge")
+                    .tag(JobPhase.merge)
+                    .help("Approve job PRs, then merge scripts act on this job's artifacts only (dry run by default)")
             }
 
             Section("Recipes") {

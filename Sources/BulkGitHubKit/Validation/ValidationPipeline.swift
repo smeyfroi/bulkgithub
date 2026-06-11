@@ -61,9 +61,8 @@ public final class ValidationPipeline: @unchecked Sendable {
             // check scripts cannot even type-check a write. Sniffed from the
             // source (meta extraction needs the transpiled JS, which we don't
             // have yet); verified for real during meta extraction below.
-            let extraDeclaration = Self.sniffPhase(from: source) == .update
-                ? ResourceLocator.updateDeclaration
-                : nil
+            let extraDeclaration = ResourceLocator.extraDeclaration(
+                for: Self.sniffPhase(from: source))
             let typeDiagnostics = try typescript.check(source: source,
                                                        extraDeclaration: extraDeclaration)
             diagnostics += typeDiagnostics

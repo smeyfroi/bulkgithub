@@ -225,6 +225,14 @@ enum HostBindings {
             }
         }
 
+        // Merge phase: the registry-scoped merge surface. Same dry-run /
+        // armed split as updates — the same reviewed script re-runs armed.
+        if phase == .merge {
+            installMergeSurface(on: gh, github: github, collector: collector,
+                                limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                armed: writeMode == .armed)
+        }
+
         context.setObject(gh, forKeyedSubscript: "gh" as NSString)
     }
 
@@ -467,6 +475,186 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(createPR, to: AnyObject.self),
                      forKeyedSubscript: "createPR" as NSString)
+    }
+
+    // MARK: - Merge surface (phase 5, registry-scoped)
+
+    /// The merge-phase surface. EVERYTHING here is scoped to the job's
+    /// artifact registry — a merge script cannot touch a PR or branch the
+    /// job didn't create. Merging additionally requires the user's in-app
+    /// approval AND that the head SHA still matches the approved one (an
+    /// approval is for a specific state of the branch, host-enforced in
+    /// both dry-run and armed modes so drift surfaces at review time).
+    /// Dry run records a plan; armed conforms to that plan and executes.
+    private static func installMergeSurface(on gh: JSValue, github: GitHubClient,
+                                            collector: JobCollector,
+                                            limiter: AsyncSemaphore, cancel: CancelBox,
+                                            vmQueue: DispatchQueue, armed: Bool) {
+        @Sendable func preflight(_ repo: String) throws {
+            guard armed else { return }
+            if collector.isOutsideCanary(repo) {
+                collector.haltRepo(repo, status: .skipped,
+                                   reason: "not selected for writes — nothing merged")
+                throw GitHubClientError.http(403, "\(repo) is not selected for this armed run")
+            }
+            if collector.isHalted(repo) {
+                throw GitHubClientError.http(409, "writes to \(repo) were halted earlier in this run")
+            }
+        }
+
+        /// Armed mode: the call must be the next action of the reviewed plan.
+        @Sendable func conform(_ repo: String, _ action: PlannedAction) throws {
+            guard armed else { return }
+            guard collector.expectedNextAction(repo: repo) == action else {
+                collector.haltRepo(repo, status: .conflicted,
+                                   reason: "script deviated from the reviewed plan (\(action.summary)) — nothing further done")
+                throw GitHubClientError.http(409, "plan deviation: \(action.summary) is not the next reviewed action for \(repo)")
+            }
+        }
+
+        let listJobPRs: @convention(block) () -> JSValue = {
+            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                var prs: [PullRequestRef] = []
+                for entry in collector.registryPRs {
+                    let pr = try await github.getPR(repo: entry.repo, number: entry.number)
+                    prs.append(pr)
+                }
+                collector.audit(kind: "gh.listJobPRs", repo: nil,
+                                detail: "→ \(prs.count) registry PR(s)")
+                return prs.map(\.scriptValue)
+            }
+        }
+        gh.setObject(unsafeBitCast(listJobPRs, to: AnyObject.self),
+                     forKeyedSubscript: "listJobPRs" as NSString)
+
+        let mergePR: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, numberValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("mergePR: repo is required")
+            }
+            guard let numberValue, numberValue.isNumber else {
+                return rejectedPromise("mergePR: PR number is required")
+            }
+            let number = Int(numberValue.toInt32())
+            guard let opts = optsValue, opts.isObject,
+                  let expectedHeadSha = stringArg(opts.objectForKeyedSubscript("expectedHeadSha")) else {
+                return rejectedPromise("mergePR: opts { expectedHeadSha } is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard collector.isRegistryPR(repo: fullName, number: number) else {
+                    throw GitHubClientError.http(403,
+                        "PR #\(number) in \(fullName) is not in this job's artifact registry — merge scripts may only touch PRs the job created")
+                }
+                guard let approval = collector.approval(repo: fullName, number: number) else {
+                    collector.haltRepo(fullName, status: .blocked,
+                                       reason: "PR #\(number) is not approved — approve it in the app before merging")
+                    throw GitHubClientError.http(403, "PR #\(number) in \(fullName) has no user approval")
+                }
+                // Approval drift guard FIRST: the branch must still be exactly
+                // what the user approved. (Checked before the script's
+                // expectedHeadSha so a moved branch reads as drift, not as
+                // the script passing a wrong value — listJobPRs hands the
+                // script the current sha.)
+                let current = try await github.getPR(repo: fullName, number: number)
+                guard current.headSha == approval.headSha else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "PR #\(number) head moved since approval — re-review and approve again")
+                    throw GitHubClientError.http(409, "PR #\(number) head moved since approval")
+                }
+                guard approval.headSha == expectedHeadSha else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "PR #\(number): the script's expectedHeadSha differs from the approved SHA")
+                    throw GitHubClientError.http(409, "expectedHeadSha does not match the approved SHA for PR #\(number)")
+                }
+                let action = PlannedAction.mergePR(number: number, expectedHeadSha: expectedHeadSha)
+                if armed {
+                    try conform(fullName, action)
+                    let sha = try await github.mergePR(repo: fullName, number: number,
+                                                       expectedHeadSha: expectedHeadSha)
+                    collector.consumeNextAction(repo: fullName)
+                    collector.upsert(repo: collector.repo(named: fullName), status: .merged,
+                                     reason: "PR #\(number) squash-merged as \(String(sha.prefix(12)))")
+                    collector.audit(kind: "write.mergePR", repo: fullName,
+                                    detail: "#\(number) → \(String(sha.prefix(12))) (ARMED)")
+                    return ["sha": sha]
+                } else {
+                    collector.recordAction(repo: fullName, action)
+                    collector.audit(kind: "plan.mergePR", repo: fullName,
+                                    detail: "#\(number) at \(String(expectedHeadSha.prefix(12))) (dry-run)")
+                    return ["sha": syntheticSha("\(fullName)#\(number)#merge")]
+                }
+            }
+        }
+        gh.setObject(unsafeBitCast(mergePR, to: AnyObject.self),
+                     forKeyedSubscript: "mergePR" as NSString)
+
+        let closePR: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, numberValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("closePR: repo is required")
+            }
+            guard let numberValue, numberValue.isNumber else {
+                return rejectedPromise("closePR: PR number is required")
+            }
+            let number = Int(numberValue.toInt32())
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard collector.isRegistryPR(repo: fullName, number: number) else {
+                    throw GitHubClientError.http(403,
+                        "PR #\(number) in \(fullName) is not in this job's artifact registry")
+                }
+                let action = PlannedAction.closePR(number: number)
+                if armed {
+                    try conform(fullName, action)
+                    try await github.closePR(repo: fullName, number: number)
+                    collector.consumeNextAction(repo: fullName)
+                    collector.upsert(repo: collector.repo(named: fullName), status: .cancelled,
+                                     reason: "PR #\(number) closed without merging")
+                    collector.audit(kind: "write.closePR", repo: fullName,
+                                    detail: "#\(number) (ARMED)")
+                } else {
+                    collector.recordAction(repo: fullName, action)
+                    collector.audit(kind: "plan.closePR", repo: fullName,
+                                    detail: "#\(number) (dry-run)")
+                }
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(closePR, to: AnyObject.self),
+                     forKeyedSubscript: "closePR" as NSString)
+
+        let deleteBranch: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, nameValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("deleteBranch: repo is required")
+            }
+            guard let name = stringArg(nameValue) else {
+                return rejectedPromise("deleteBranch: branch name is required")
+            }
+            guard name.hasPrefix("bulkgh/") else {
+                return rejectedPromise("deleteBranch: only \"bulkgh/\"-prefixed job branches can be deleted (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard collector.isRegistryBranch(repo: fullName, name: name) else {
+                    throw GitHubClientError.http(403,
+                        "branch \(name) in \(fullName) is not in this job's artifact registry")
+                }
+                let action = PlannedAction.deleteBranch(name: name)
+                if armed {
+                    try conform(fullName, action)
+                    try await github.deleteBranch(repo: fullName, name: name)
+                    collector.consumeNextAction(repo: fullName)
+                    collector.audit(kind: "write.deleteBranch", repo: fullName,
+                                    detail: "\(name) (ARMED)")
+                } else {
+                    collector.recordAction(repo: fullName, action)
+                    collector.audit(kind: "plan.deleteBranch", repo: fullName,
+                                    detail: "\(name) (dry-run)")
+                }
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(deleteBranch, to: AnyObject.self),
+                     forKeyedSubscript: "deleteBranch" as NSString)
     }
 
     /// Deterministic fake SHA for synthesized dry-run responses.

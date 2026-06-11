@@ -304,6 +304,43 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         return pr
     }
 
+    public func getPR(repo: String, number: Int) async throws -> PullRequestRef {
+        let json = try await fetchJSON(try request(path: "repos/\(repo)/pulls/\(number)"))
+        guard let dict = json as? [String: Any],
+              let pr = Self.pullRequest(from: dict, repo: repo) else {
+            throw GitHubClientError.invalidResponse("pulls API returned unexpected shape for #\(number)")
+        }
+        return pr
+    }
+
+    public func mergePR(repo: String, number: Int, expectedHeadSha: String) async throws -> String {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        // `sha` is GitHub's own precondition: the merge is rejected with 409
+        // if the head moved since the value was captured.
+        let json = try await fetchJSON(try mutatingRequest(
+            method: "PUT", path: "repos/\(repo)/pulls/\(number)/merge",
+            body: ["merge_method": "squash", "sha": expectedHeadSha]))
+        guard let dict = json as? [String: Any], let sha = dict["sha"] as? String else {
+            throw GitHubClientError.invalidResponse("merge API returned unexpected shape")
+        }
+        return sha
+    }
+
+    public func closePR(repo: String, number: Int) async throws {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        _ = try await fetchJSON(try mutatingRequest(
+            method: "PATCH", path: "repos/\(repo)/pulls/\(number)",
+            body: ["state": "closed"]))
+    }
+
+    public func deleteBranch(repo: String, name: String) async throws {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        // DELETE returns 204 with an empty body — bypass the JSON decode.
+        var request = try request(path: "repos/\(repo)/git/refs/heads/\(name)")
+        request.httpMethod = "DELETE"
+        _ = try await fetch(request)
+    }
+
     private static func pullRequest(from json: [String: Any], repo: String) -> PullRequestRef? {
         guard let number = json["number"] as? Int else { return nil }
         let head = json["head"] as? [String: Any]

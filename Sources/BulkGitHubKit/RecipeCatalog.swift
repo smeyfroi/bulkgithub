@@ -30,6 +30,16 @@ public enum RecipeCatalog {
                prompt: "delete the line containing `ec2-shell-prod-eu-west-1-keypair-1` from files in deploy/",
                phase: .update,
                systemImage: "pencil.slash"),
+        Recipe(id: "merge_approved_prs",
+               title: "Merge approved PRs",
+               prompt: "squash-merge the approved pull requests this job created, then delete their branches",
+               phase: .merge,
+               systemImage: "arrow.triangle.merge"),
+        Recipe(id: "cancel_job",
+               title: "Cancel job",
+               prompt: "cancel this job: close its open pull requests without merging and delete its branches",
+               phase: .merge,
+               systemImage: "xmark.circle"),
     ]
 
     public static func recipe(id: String) -> Recipe? {

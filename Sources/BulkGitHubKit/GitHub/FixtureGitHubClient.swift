@@ -221,6 +221,65 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         return pr
     }
 
+    public func getPR(repo: String, number: Int) async throws -> PullRequestRef {
+        record("getPR(\(repo), #\(number))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard var pr = _pullRequests.first(where: { $0.repo == repo && $0.number == number }) else {
+            throw GitHubClientError.notFound("PR #\(number) in \(repo)")
+        }
+        // Like the real API: an open PR's head sha tracks its branch.
+        if pr.state == "open", let sha = _branches[repo]?[pr.headRef] {
+            pr.headSha = sha
+        }
+        return pr
+    }
+
+    public func mergePR(repo: String, number: Int, expectedHeadSha: String) async throws -> String {
+        record("mergePR(\(repo), #\(number))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard let index = _pullRequests.firstIndex(where: { $0.repo == repo && $0.number == number }) else {
+            throw GitHubClientError.notFound("PR #\(number) in \(repo)")
+        }
+        guard _pullRequests[index].state == "open" else {
+            throw GitHubClientError.http(405, "Pull request is not open")
+        }
+        let currentHead = _branches[repo]?[_pullRequests[index].headRef]
+            ?? _pullRequests[index].headSha
+        guard currentHead == expectedHeadSha else {
+            // Mirrors GitHub's merge precondition failure.
+            throw GitHubClientError.http(409, "Head branch was modified. Review and try the merge again.")
+        }
+        _pullRequests[index].state = "merged"
+        _pullRequests[index].headSha = currentHead
+        return Self.fakeSha("\(repo)#\(number)#merged")
+    }
+
+    public func closePR(repo: String, number: Int) async throws {
+        record("closePR(\(repo), #\(number))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard let index = _pullRequests.firstIndex(where: { $0.repo == repo && $0.number == number }) else {
+            throw GitHubClientError.notFound("PR #\(number) in \(repo)")
+        }
+        guard _pullRequests[index].state == "open" else {
+            throw GitHubClientError.http(422, "Pull request is not open")
+        }
+        _pullRequests[index].state = "closed"
+    }
+
+    public func deleteBranch(repo: String, name: String) async throws {
+        record("deleteBranch(\(repo), \(name))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard _branches[repo]?[name] != nil else {
+            throw GitHubClientError.http(422, "Reference does not exist")
+        }
+        _branches[repo]?.removeValue(forKey: name)
+        _branchContents.removeValue(forKey: "\(repo)|\(name)")
+    }
+
     /// Deterministic fake SHA derived from inputs.
     private static func fakeSha(_ basis: String) -> String {
         let sha = basis.unicodeScalars.reduce(into: UInt64(5381)) { $0 = ($0 << 5) &+ $0 &+ UInt64($1.value) }

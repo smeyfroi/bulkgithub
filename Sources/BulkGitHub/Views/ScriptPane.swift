@@ -9,13 +9,11 @@ struct ScriptPane: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 6) {
-            if model.phase == .update {
+            if model.phase != .check {
                 WriteModeBanner()
             }
             HStack(spacing: 8) {
-                TextField(model.phase == .update
-                            ? "Describe the change to make across matching repos…"
-                            : "Describe what to find across the organisation…",
+                TextField(promptPlaceholder,
                           text: $model.prompt, axis: .vertical)
                     .lineLimit(1...3)
                     .textFieldStyle(.roundedBorder)
@@ -75,6 +73,14 @@ struct ScriptPane: View {
                     .foregroundStyle(.tertiary)
             }
             .padding([.horizontal, .bottom], 10)
+        }
+    }
+
+    private var promptPlaceholder: String {
+        switch model.phase {
+        case .check: return "Describe what to find across the organisation…"
+        case .update: return "Describe the change to make across matching repos…"
+        case .merge: return "Describe the merge or cancel action for this job's PRs…"
         }
     }
 }

@@ -11,11 +11,72 @@ struct ResultsPane: View {
             }
             // Per-mode tables: the update table keeps the check verdict
             // visible next to the update status so the funnel reads
-            // found-by-Check → planned-by-Update.
-            if model.phase == .update {
+            // found-by-Check → planned-by-Update; the merge table is the
+            // approval queue over the job's PR artifacts.
+            switch model.phase {
+            case .update:
                 updateTable
-            } else {
+            case .merge:
+                mergeTable
+            case .check:
                 checkTable
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mergeTable: some View {
+        @Bindable var model = model
+        if model.mergeRows.isEmpty {
+            ContentUnavailableView(
+                "No job pull requests",
+                systemImage: "arrow.triangle.pull",
+                description: Text("Apply an update plan first — the PRs it creates appear here for approval and merging.")
+            )
+        } else {
+            Table(model.mergeRows, selection: $model.selectedRepo) {
+                TableColumn("Approved") { (row: AppModel.MergeRow) in
+                    Toggle("", isOn: Binding(
+                        get: { row.approved },
+                        set: { _ in model.toggleApproval(repo: row.artifact.repo, prNumber: row.number) }
+                    ))
+                    .labelsHidden()
+                    .help(row.approved
+                            ? "Approved — merging requires the head to still match the approved SHA"
+                            : "Approve this PR for merging (captures the current head SHA)")
+                    .disabled(model.running)
+                }
+                .width(min: 60, ideal: 70)
+
+                TableColumn("Merge") { (row: AppModel.MergeRow) in
+                    if let result = row.result {
+                        StatusBadge(status: result.status)
+                    } else {
+                        Text("—")
+                            .foregroundStyle(.tertiary)
+                            .help("No merge run yet")
+                    }
+                }
+                .width(min: 90, ideal: 110)
+
+                TableColumn("Repository") { (row: AppModel.MergeRow) in
+                    RepoCell(repo: row.repo)
+                }
+
+                TableColumn("PR") { (row: AppModel.MergeRow) in
+                    if let url = row.artifact.url, let link = URL(string: url) {
+                        Link(row.artifact.name, destination: link)
+                    } else {
+                        Text(row.artifact.name)
+                    }
+                }
+                .width(min: 50, ideal: 70)
+
+                TableColumn("Detail") { (row: AppModel.MergeRow) in
+                    if let result = row.result {
+                        DetailCell(result: result)
+                    }
+                }
             }
         }
     }
