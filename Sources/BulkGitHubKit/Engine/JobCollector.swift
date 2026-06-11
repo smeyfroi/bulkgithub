@@ -56,6 +56,26 @@ public final class JobCollector: @unchecked Sendable {
         events.forEach(onEvent)
     }
 
+    /// Run completed: every repo the script enumerated but never reported on
+    /// is resolved to "no match". Mid-run, `candidate` means "being examined";
+    /// leaving it on the final table reads as if every org repo matched.
+    /// Not called for cancelled or failed runs, where candidates genuinely
+    /// were still pending.
+    public func finalizeUnreportedCandidates() {
+        var events: [RunEvent] = []
+        lock.lock()
+        for fullName in order {
+            guard var result = resultsByRepo[fullName],
+                  result.status == .candidate else { continue }
+            result.status = .noMatch
+            result.reason = result.reason ?? "nothing reported"
+            resultsByRepo[fullName] = result
+            events.append(.repo(result))
+        }
+        lock.unlock()
+        events.forEach(onEvent)
+    }
+
     @discardableResult
     public func upsert(repo: RepoRef, status: RepoStatus, reason: String?,
                        evidence: Evidence? = nil) -> RepoResult {

@@ -59,7 +59,8 @@ credentials are stored (Keychain only; scripts can never read them).
 - [x] Mock LLM (offline) + Anthropic client (live generation, off by default)
 - [x] Persistence and restore-on-launch
 - [x] Tests; CI + release workflow skeletons
-- [ ] Live GitHub/Anthropic exercised end-to-end (deliberately deferred)
+- [x] Live GitHub/Anthropic exercised end-to-end (check phase verified against
+      a real organisation, June 2026; live update dry-runs next)
 
 ## Phase 3 status (dry-run updates)
 

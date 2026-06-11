@@ -25,7 +25,14 @@ final class AppModel {
     var quotaText: String?
     private var promptsByPhase: [JobPhase: String] = [:]
     var diagnostics: [Diagnostic] = []
-    var results: [RepoResult] = []
+    /// Results are kept per phase: switching Check ↔ Update shows each
+    /// phase's own last run instead of leaking one phase's table into the
+    /// other.
+    private(set) var resultsByPhase: [JobPhase: [RepoResult]] = [:]
+    /// The script source that produced each phase's results, for staleness:
+    /// regenerating or editing the script makes existing results stale.
+    private var ranScriptByPhase: [JobPhase: String] = [:]
+    var results: [RepoResult] { resultsByPhase[phase] ?? [] }
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
     var plannedActions: [String: [PlannedAction]] = [:]
@@ -40,6 +47,13 @@ final class AppModel {
     @ObservationIgnored private let engine = ScriptEngine()
     @ObservationIgnored private let rateLimit = RateLimitMonitor()
     @ObservationIgnored private var runTask: Task<Void, Never>?
+    /// In-flight validation, joinable: Run during the post-generation
+    /// auto-validate waits for that result instead of silently bailing.
+    @ObservationIgnored private var validationTask: Task<ValidatedScript?, Never>?
+    /// Bumped per run; engine events carry the generation they belong to, so
+    /// stragglers arriving after the final snapshot can't re-append stale rows
+    /// or duplicate log lines.
+    @ObservationIgnored private var runGeneration = 0
     @ObservationIgnored private let typescript = TypeScriptService.loadDefault()
     @ObservationIgnored private lazy var pipeline = ValidationPipeline(typescript: typescript)
 
@@ -52,7 +66,25 @@ final class AppModel {
                 prompt = job.prompt
                 scriptText = job.scriptSource
                 paramsDraft = job.params
-                results = job.results
+                if let saved = job.resultsByPhase {
+                    for (key, value) in saved {
+                        if let savedPhase = JobPhase(rawValue: key) {
+                            resultsByPhase[savedPhase] = value
+                        }
+                    }
+                } else if !job.results.isEmpty {
+                    // Pre-per-phase save: attribute the single list to the
+                    // job's phase, produced by the saved script.
+                    resultsByPhase[job.phase] = job.results
+                    ranScriptByPhase[job.phase] = job.scriptSource
+                }
+                if let saved = job.ranScriptByPhase {
+                    for (key, value) in saved {
+                        if let savedPhase = JobPhase(rawValue: key) {
+                            ranScriptByPhase[savedPhase] = value
+                        }
+                    }
+                }
                 logs = job.logs
                 auditEvents = job.auditEvents
                 plannedActions = job.plannedActions ?? [:]
@@ -84,6 +116,33 @@ final class AppModel {
     var selectedResult: RepoResult? {
         guard let selectedRepo else { return nil }
         return results.first { $0.id == selectedRepo }
+    }
+
+    /// The visible results were produced by a different script than the one
+    /// in the editor (regenerated or edited since the run).
+    var resultsAreStale: Bool {
+        guard !results.isEmpty, let ran = ranScriptByPhase[phase] else { return false }
+        return ran != scriptText
+    }
+
+    /// The check-phase verdict for a repo — shown alongside update results so
+    /// the funnel (found by Check → planned by Update) stays visible.
+    func checkStatus(for repoID: String) -> RepoStatus? {
+        resultsByPhase[.check]?.first { $0.id == repoID }?.status
+    }
+
+    func clearResults() {
+        resultsByPhase[phase] = []
+        ranScriptByPhase[phase] = nil
+        if phase == .update { plannedActions = [:] }
+        selectedRepo = nil
+        statusLine = "Results cleared"
+    }
+
+    func useAsCanary(_ repoID: String) {
+        canaryRepo = repoID
+        setPhase(.update)
+        statusLine = "Canary set — update runs are confined to \(repoID)"
     }
 
     func setPhase(_ newPhase: JobPhase) {
@@ -206,7 +265,18 @@ final class AppModel {
 
     @discardableResult
     func validate() async -> ValidatedScript? {
-        guard !validating else { return nil }
+        // Join an in-flight validation (e.g. the auto-validate right after
+        // generation) instead of bailing with nil — the silent nil made Run
+        // a no-op the first time after regenerating a script.
+        if let task = validationTask { return await task.value }
+        let task = Task { await performValidation() }
+        validationTask = task
+        let result = await task.value
+        validationTask = nil
+        return result
+    }
+
+    private func performValidation() async -> ValidatedScript? {
         validating = true
         defer { validating = false }
         statusLine = typeCheckingAvailable ? "Type-checking against bulkgh.d.ts…" : "Checking…"
@@ -243,7 +313,7 @@ final class AppModel {
     }
 
     func run() {
-        guard !running else { return }
+        guard !running, !generating else { return }
         runTask = Task { await runInternal() }
     }
 
@@ -251,41 +321,54 @@ final class AppModel {
         guard let validated = await validate() else { return }
         running = true
         defer { running = false }
-        results = []
+        let runPhase = validated.meta.phase
+        let runScript = scriptText
+        runGeneration += 1
+        let generation = runGeneration
+        resultsByPhase[runPhase] = []
         logs = []
         auditEvents = []
-        plannedActions = [:]
+        if runPhase == .update { plannedActions = [:] }
         selectedRepo = nil
         statusLine = "Running…"
         var params = paramsDraft
-        if validated.meta.phase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
+        if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
             params["prTitle"] = prTitle
         }
         var configuration = EngineConfiguration(settings: settings)
         let canary = canaryRepo.trimmingCharacters(in: .whitespaces)
-        if validated.meta.phase == .update, !canary.isEmpty {
+        if runPhase == .update, !canary.isEmpty {
             let fullName = canary.contains("/") ? canary : "\(settings.organisation)/\(canary)"
             configuration.targetRepos = [fullName]
         }
         let outcome = await engine.run(javaScript: validated.javaScript,
-                                       phase: validated.meta.phase,
+                                       phase: runPhase,
                                        params: params,
                                        github: githubClient(),
                                        organisation: settings.organisation,
                                        configuration: configuration,
                                        initialState: jobState) { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.handle(event)
+                guard let self, self.runGeneration == generation else { return }
+                self.handle(event, phase: runPhase)
             }
         }
-        results = outcome.results
+        // Retire stragglers before installing the final snapshot — a late
+        // event hopping onto the main actor afterwards would duplicate rows
+        // or log lines.
+        runGeneration += 1
+        resultsByPhase[runPhase] = outcome.results
+        ranScriptByPhase[runPhase] = runScript
         logs = outcome.logs
         auditEvents = outcome.auditEvents
-        plannedActions = outcome.plannedActions
+        if runPhase == .update { plannedActions = outcome.plannedActions }
         if !outcome.state.isEmpty {
             jobState.merge(outcome.state) { _, new in new }
         }
         refreshQuota()
+        if let quotaText {
+            logs.append("◆ GitHub \(quotaText) requests remaining")
+        }
         let plannedRepos = outcome.results.filter { $0.status == .planned }
         if let first = plannedRepos.first {
             selectedRepo = first.id
@@ -301,18 +384,20 @@ final class AppModel {
         statusLine = "Cancelling…"
     }
 
-    private func handle(_ event: RunEvent) {
+    private func handle(_ event: RunEvent, phase runPhase: JobPhase) {
         switch event {
         case .log(let line):
             logs.append(line)
         case .progress(let line):
             logs.append("▸ \(line)")
         case .repo(let result):
-            if let index = results.firstIndex(where: { $0.id == result.id }) {
-                results[index] = result
+            var rows = resultsByPhase[runPhase] ?? []
+            if let index = rows.firstIndex(where: { $0.id == result.id }) {
+                rows[index] = result
             } else {
-                results.append(result)
+                rows.append(result)
             }
+            resultsByPhase[runPhase] = rows
         case .audit(let event):
             auditEvents.append(event)
             refreshQuota()
@@ -326,6 +411,10 @@ final class AppModel {
         job.scriptSource = scriptText
         job.params = paramsDraft
         job.results = results
+        job.resultsByPhase = Dictionary(uniqueKeysWithValues:
+            resultsByPhase.map { ($0.key.rawValue, $0.value) })
+        job.ranScriptByPhase = Dictionary(uniqueKeysWithValues:
+            ranScriptByPhase.map { ($0.key.rawValue, $0.value) })
         job.logs = logs
         job.auditEvents = auditEvents
         job.plannedActions = plannedActions

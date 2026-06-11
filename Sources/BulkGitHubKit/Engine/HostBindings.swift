@@ -313,7 +313,15 @@ enum HostBindings {
                 return
             }
             let explanation = stringArg(evidenceValue.objectForKeyedSubscript("explanation"))
-            let evidence = Evidence(path: path, excerpt: excerpt, explanation: explanation)
+            var evidence = Evidence(path: path, excerpt: excerpt, explanation: explanation)
+            // The receipt rule guarantees the file content is cached; capture
+            // the lines around the excerpt so the review pane can show the
+            // match in situ, not just the bare excerpt the script passed.
+            if let content = collector.fetchedContent(repo: ref.fullName, path: path),
+               let snippet = contextSnippet(around: excerpt, in: content) {
+                evidence.context = snippet.text
+                evidence.contextStartLine = snippet.startLine
+            }
             collector.upsert(repo: ref, status: .verifiedMatch, reason: explanation, evidence: evidence)
             collector.audit(kind: "job.reportMatch", repo: ref.fullName, detail: path)
         }
@@ -427,6 +435,25 @@ enum HostBindings {
     }
 
     // MARK: - Helpers
+
+    /// Lines surrounding an excerpt within fetched file content. Located by
+    /// the excerpt's first non-empty line; nil when it can't be found (the
+    /// script may have normalised whitespace).
+    static func contextSnippet(around excerpt: String, in content: String,
+                               radius: Int = 3) -> (text: String, startLine: Int)? {
+        let needle = excerpt
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first.map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let needle, !needle.isEmpty else { return nil }
+        let lines = content.components(separatedBy: "\n")
+        guard let index = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces).contains(needle)
+        }) else { return nil }
+        let excerptLineCount = excerpt.components(separatedBy: "\n").count
+        let start = max(0, index - radius)
+        let end = min(lines.count, index + excerptLineCount + radius)
+        return (lines[start..<end].joined(separator: "\n"), start + 1)
+    }
 
     /// Wraps async Swift host work in a JS Promise.
     ///

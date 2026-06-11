@@ -35,7 +35,7 @@ struct MainView: View {
                         Label("Check", systemImage: "checkmark.shield")
                     }
                     .help("Lint and type-check the script against the host API")
-                    .disabled(model.running || model.validating)
+                    .disabled(model.running || model.validating || model.generating)
 
                     if model.running {
                         Button {
@@ -53,7 +53,9 @@ struct MainView: View {
                             Label("Run", systemImage: "play.fill")
                         }
                         .help("Validate and run the script (check phase is read-only; update phase records a dry-run plan)")
-                        .disabled(model.scriptText.isEmpty || model.validating)
+                        // Generation streams into the editor, so running
+                        // mid-generation would execute a truncated script.
+                        .disabled(model.scriptText.isEmpty || model.validating || model.generating)
                     }
                 }
             }

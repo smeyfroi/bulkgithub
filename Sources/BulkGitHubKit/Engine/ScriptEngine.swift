@@ -161,6 +161,7 @@ public final class ScriptEngine {
 
         let status = await Self.awaitSettlement(once: once, cancel: cancel,
                                                 maxRunSeconds: configuration.maxRunSeconds)
+        if status == .completed { collector.finalizeUnreportedCandidates() }
         collector.log("run \(status.label) in \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
         return outcome(status)
     }

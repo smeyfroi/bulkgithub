@@ -54,6 +54,9 @@ public struct PullRequestRef: Codable, Hashable, Sendable {
 
 public enum RepoStatus: String, Codable, Sendable, CaseIterable {
     case candidate
+    /// Examined during the run but nothing was reported: distinguishes "we
+    /// looked and found nothing" from "still being examined" (candidate).
+    case noMatch = "no match"
     case verifiedMatch = "verified match"
     case skipped
     case failed
@@ -74,11 +77,19 @@ public struct Evidence: Codable, Hashable, Sendable {
     public var path: String
     public var excerpt: String
     public var explanation: String?
+    /// Surrounding lines from the fetched file, captured by the host when the
+    /// script reports a match — the script only supplies the excerpt.
+    public var context: String?
+    /// 1-based line number of the first context line, for display.
+    public var contextStartLine: Int?
 
-    public init(path: String, excerpt: String, explanation: String? = nil) {
+    public init(path: String, excerpt: String, explanation: String? = nil,
+                context: String? = nil, contextStartLine: Int? = nil) {
         self.path = path
         self.excerpt = excerpt
         self.explanation = explanation
+        self.context = context
+        self.contextStartLine = contextStartLine
     }
 }
 
@@ -141,6 +152,12 @@ public struct Job: Codable, Identifiable, Sendable {
     public var promptsByPhase: [String: String]?
     public var prTitle: String?
     public var canaryRepo: String?
+    /// Results per phase (keyed by JobPhase rawValue) — check results survive
+    /// a switch into update and back. `results` remains the legacy single list.
+    public var resultsByPhase: [String: [RepoResult]]?
+    /// The script source each phase's results were produced by, for staleness
+    /// detection after the script is regenerated or edited.
+    public var ranScriptByPhase: [String: String]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {

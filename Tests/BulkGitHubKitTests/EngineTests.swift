@@ -18,7 +18,7 @@ struct EngineTests {
                                  onEvent: { _ in })
     }
 
-    @Test("listOrgRepos resolves and registers candidates")
+    @Test("listOrgRepos registers candidates; unreported ones finalize to no-match")
     func listRepos() async {
         let outcome = await run("""
         async function main() {
@@ -29,7 +29,47 @@ struct EngineTests {
         #expect(outcome.status == .completed)
         #expect(outcome.logs.contains("count=7"))
         #expect(outcome.results.count == 7)
-        #expect(outcome.results.allSatisfy { $0.status == .candidate })
+        // "candidate" is a mid-run state. A completed run resolves every
+        // enumerated-but-unreported repo to "no match" so the final table
+        // doesn't read as if all org repos matched.
+        #expect(outcome.results.allSatisfy { $0.status == .noMatch })
+        #expect(outcome.results.allSatisfy { $0.reason == "nothing reported" })
+    }
+
+    @Test("finalize leaves reported repos alone; reportMatch captures context")
+    func finalizeAndEvidenceContext() async {
+        let outcome = await run("""
+        async function main() {
+          await gh.listOrgRepos();
+          await gh.getContent("geome/web-frontend", "deploy/infra.json");
+          job.reportMatch("geome/web-frontend", {
+            path: "deploy/infra.json",
+            excerpt: "\\"keyPair\\": \\"ec2-shell-prod-eu-west-1-keypair-1\\"",
+          });
+          job.skip("geome/api-service", "ruled out");
+        }
+        """)
+        #expect(outcome.status == .completed)
+        var byRepo: [String: RepoResult] = [:]
+        for result in outcome.results { byRepo[result.id] = result }
+        #expect(byRepo["geome/web-frontend"]?.status == .verifiedMatch)
+        #expect(byRepo["geome/api-service"]?.status == .skipped)
+        #expect(byRepo["geome/data-pipeline"]?.status == .noMatch)
+
+        // The host pulls surrounding lines from the receipt-cached content so
+        // the review pane can show the match in situ.
+        let evidence = byRepo["geome/web-frontend"]?.evidence.first
+        #expect(evidence?.context?.contains("\"region\": \"eu-west-1\",") == true)
+        #expect(evidence?.contextStartLine == 1)
+    }
+
+    @Test("contextSnippet centres on the excerpt and reports its start line")
+    func contextSnippetHelper() {
+        let content = (1...10).map { "line\($0)" }.joined(separator: "\n")
+        let snippet = HostBindings.contextSnippet(around: "line6", in: content, radius: 2)
+        #expect(snippet?.startLine == 4)
+        #expect(snippet?.text == "line4\nline5\nline6\nline7\nline8")
+        #expect(HostBindings.contextSnippet(around: "absent", in: content) == nil)
     }
 
     @Test("write surface does not exist on the check-phase handle")

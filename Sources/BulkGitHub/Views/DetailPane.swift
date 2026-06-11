@@ -29,7 +29,28 @@ struct DetailPane: View {
                     }
                     .buttonStyle(.link)
 
-                    if let actions = model.plannedActions[result.id], !actions.isEmpty {
+                    if model.canaryRepo == result.id {
+                        HStack(spacing: 8) {
+                            Label("Canary target — update runs touch only this repo",
+                                  systemImage: "scope")
+                                .font(.callout)
+                                .foregroundStyle(.purple)
+                            Button("Clear") { model.canaryRepo = "" }
+                                .controlSize(.small)
+                        }
+                    } else if model.phase != .merge {
+                        Button {
+                            model.useAsCanary(result.id)
+                        } label: {
+                            Label("Dry-run the update on just this repo",
+                                  systemImage: "scope")
+                        }
+                        .controlSize(.small)
+                        .help("Sets this repo as the canary target and switches to the update phase")
+                    }
+
+                    if model.phase == .update,
+                       let actions = model.plannedActions[result.id], !actions.isEmpty {
                         PlanView(actions: actions)
                     }
 
@@ -189,15 +210,60 @@ struct EvidenceView: View {
                     .foregroundStyle(.green)
             }
 
-            ScrollView(.horizontal) {
-                Text(evidence.excerpt)
-                    .font(.system(size: 11, design: .monospaced))
+            // Context captured by the host at reportMatch time: the match in
+            // situ with line numbers, not just the excerpt the script passed.
+            if let context = evidence.context {
+                ScrollView(.horizontal) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(contextLines(context), id: \.number) { line in
+                            HStack(spacing: 8) {
+                                Text(String(line.number))
+                                    .foregroundStyle(.tertiary)
+                                    .frame(minWidth: 28, alignment: .trailing)
+                                Text(line.text.isEmpty ? " " : line.text)
+                                    .foregroundStyle(line.isMatch ? .primary : .secondary)
+                                Spacer(minLength: 0)
+                            }
+                            .font(.system(size: 11, design: .monospaced))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(line.isMatch ? Color.yellow.opacity(0.18) : .clear)
+                        }
+                    }
+                    .padding(.vertical, 4)
                     .textSelection(.enabled)
-                    .padding(8)
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            } else {
+                ScrollView(.horizontal) {
+                    Text(evidence.excerpt)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(8)
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
             }
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
         }
         .padding(10)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private struct ContextLine {
+        let number: Int
+        let text: String
+        let isMatch: Bool
+    }
+
+    private func contextLines(_ context: String) -> [ContextLine] {
+        let matchLines = Set(evidence.excerpt
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) })
+        let start = evidence.contextStartLine ?? 1
+        return context.components(separatedBy: "\n").enumerated().map { offset, text in
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            return ContextLine(number: start + offset,
+                               text: text,
+                               isMatch: !trimmed.isEmpty && matchLines.contains(trimmed))
+        }
     }
 }
