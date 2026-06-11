@@ -8,17 +8,18 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
     public init() {}
 
     public func makeScript(prompt: String, context: ScriptGenerationContext) async throws -> String {
-        // Crude routing between the bundled recipes: delete/remove-a-line
-        // prompts go to the dry-run update, "contains" prompts to the string
-        // scan, key/value prompts to the YAML check.
-        let lowered = prompt.lowercased()
-        if (lowered.contains("delete") || lowered.contains("remove")), lowered.contains("line") {
+        // The selected phase decides what kind of script comes back, exactly
+        // like the real client's system prompt does; keywords only refine the
+        // recipe choice within the check phase.
+        switch context.phase {
+        case .update, .merge:
             return try lineRemovalScript(for: prompt)
+        case .check:
+            if prompt.range(of: "contains", options: .caseInsensitive) != nil {
+                return try stringScanScript(for: prompt)
+            }
+            return try yamlKeyValueScript(for: prompt)
         }
-        if lowered.contains("contains") {
-            return try stringScanScript(for: prompt)
-        }
-        return try yamlKeyValueScript(for: prompt)
     }
 
     private func lineRemovalScript(for prompt: String) throws -> String {

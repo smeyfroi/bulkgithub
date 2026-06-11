@@ -80,7 +80,7 @@ public final class ValidationPipeline: @unchecked Sendable {
         return ValidatedScript(javaScript: javaScript, meta: meta, diagnostics: diagnostics)
     }
 
-    static func sniffPhase(from source: String) -> JobPhase {
+    public static func sniffPhase(from source: String) -> JobPhase {
         guard let regex = try? NSRegularExpression(pattern: #"phase\s*:\s*"(check|update|merge)""#),
               let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
               let range = Range(match.range(at: 1), in: source),

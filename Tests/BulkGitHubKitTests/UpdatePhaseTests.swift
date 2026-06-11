@@ -121,14 +121,22 @@ struct UpdatePhaseTests {
         #expect(outcome.logs.contains("t=undefined"))
     }
 
-    @Test("mock routes line-deletion prompts to the update recipe")
+    @Test("the selected phase drives mock generation, like the real system prompt")
     func mockRouting() async throws {
         let prompt = "delete the line containing `retired-token-xyz` from files in config/"
-        let script = try await MockLLMClient().makeScript(
-            prompt: prompt, context: ScriptGenerationContext(organisation: "geome"))
-        #expect(script.contains("needle: \"retired-token-xyz\""))
-        #expect(script.contains("glob: \"config/**\""))
-        #expect(ValidationPipeline.sniffPhase(from: script) == .update)
+        let updateScript = try await MockLLMClient().makeScript(
+            prompt: prompt,
+            context: ScriptGenerationContext(organisation: "geome", phase: .update))
+        #expect(updateScript.contains("needle: \"retired-token-xyz\""))
+        #expect(updateScript.contains("glob: \"config/**\""))
+        #expect(ValidationPipeline.sniffPhase(from: updateScript) == .update)
+
+        // The same prompt in check phase yields a check script — generation
+        // follows the selected phase, not prompt keywords.
+        let checkScript = try await MockLLMClient().makeScript(
+            prompt: prompt,
+            context: ScriptGenerationContext(organisation: "geome", phase: .check))
+        #expect(ValidationPipeline.sniffPhase(from: checkScript) == .check)
     }
 }
 

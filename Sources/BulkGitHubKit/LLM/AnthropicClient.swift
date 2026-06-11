@@ -34,8 +34,11 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
     }
 
     private static func userMessage(for prompt: String, context: ScriptGenerationContext) -> String {
-        """
-        Write a \(context.phase.rawValue) script for this request:
+        let kind = context.phase == .update
+            ? "an update (dry-run) script"
+            : "a \(context.phase.rawValue) script"
+        return """
+        Write \(kind) for this request:
 
         \(prompt)
         """

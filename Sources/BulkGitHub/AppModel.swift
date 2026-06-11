@@ -6,6 +6,10 @@ import BulkGitHubKit
 @Observable
 final class AppModel {
     var settings = AppSettings()
+    /// The selected job phase: drives what kind of script Generate requests.
+    /// Kept in sync with the editor — validating or loading a script adopts
+    /// its declared phase.
+    var phase: JobPhase = .check
     var prompt: String = ""
     var scriptText: String = ""
     var paramsDraft: [String: String] = [:]
@@ -32,6 +36,7 @@ final class AppModel {
         if let snapshot = store.load() {
             settings = snapshot.settings
             if let job = snapshot.job {
+                phase = job.phase
                 prompt = job.prompt
                 scriptText = job.scriptSource
                 paramsDraft = job.params
@@ -59,9 +64,23 @@ final class AppModel {
         return results.first { $0.id == selectedRepo }
     }
 
+    func setPhase(_ newPhase: JobPhase) {
+        guard newPhase != phase else { return }
+        phase = newPhase
+        switch newPhase {
+        case .check:
+            statusLine = "Check phase — prompts generate read-only search scripts"
+        case .update:
+            statusLine = "Update phase — prompts generate dry-run update scripts (nothing reaches GitHub)"
+        case .merge:
+            statusLine = "Merge phase arrives in a later release"
+        }
+    }
+
     func loadRecipe(named name: String) {
         guard let recipe = ResourceLocator.recipe(named: name) else { return }
         scriptText = recipe
+        phase = ValidationPipeline.sniffPhase(from: recipe)
         diagnostics = []
         statusLine = "Loaded recipe — Check to type-check, Run to execute"
     }
@@ -93,7 +112,7 @@ final class AppModel {
         generating = true
         statusLine = "Requesting script… (model thinking)"
         let client = llmClient()
-        let context = ScriptGenerationContext(organisation: settings.organisation)
+        let context = ScriptGenerationContext(organisation: settings.organisation, phase: phase)
         let promptText = prompt
         let previousScript = scriptText
         Task {
@@ -161,6 +180,7 @@ final class AppModel {
                 merged[key] = value
             }
             paramsDraft = merged
+            phase = validated.meta.phase
             statusLine = "Valid — \(validated.meta.title)"
             return validated
         } catch let error as ValidationError {
@@ -231,7 +251,7 @@ final class AppModel {
     // MARK: Persistence
 
     func saveNow() {
-        var job = Job(prompt: prompt)
+        var job = Job(prompt: prompt, phase: phase)
         job.scriptSource = scriptText
         job.params = paramsDraft
         job.results = results

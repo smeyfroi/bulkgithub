@@ -61,13 +61,17 @@ struct SidebarView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        List {
+        List(selection: phaseSelection) {
             Section("Job phases") {
                 Label("Check", systemImage: "magnifyingglass")
+                    .tag(JobPhase.check)
+                    .help("Prompts generate read-only search scripts")
                 Label("Update (dry run)", systemImage: "pencil")
-                    .help("Update scripts record an execution plan — nothing reaches GitHub")
+                    .tag(JobPhase.update)
+                    .help("Prompts generate dry-run update scripts — nothing reaches GitHub")
                 Label("Merge", systemImage: "arrow.triangle.merge")
                     .foregroundStyle(.tertiary)
+                    .selectionDisabled()
                     .help("Later phase — guarded merge")
             }
 
@@ -95,6 +99,15 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+    }
+
+    private var phaseSelection: Binding<JobPhase?> {
+        Binding(
+            get: { model.phase },
+            set: { phase in
+                if let phase { model.setPhase(phase) }
+            }
+        )
     }
 }
 
