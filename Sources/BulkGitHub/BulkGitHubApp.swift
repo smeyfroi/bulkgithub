@@ -23,7 +23,9 @@ struct BulkGitHubApp: App {
         WindowGroup("BulkGitHub") {
             MainView()
                 .environment(model)
-                .frame(minWidth: 1000, minHeight: 620)
+                // Wide enough for all three column minimums plus chrome, so
+                // the split view never has to overlay the side panels.
+                .frame(minWidth: 1080, minHeight: 620)
                 .onAppear {
                     let model = self.model
                     AppDelegate.onTerminate = {

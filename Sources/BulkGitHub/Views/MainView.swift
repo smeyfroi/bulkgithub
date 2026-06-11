@@ -9,9 +9,14 @@ struct MainView: View {
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
         VStack(spacing: 0) {
+            // Every column gets a full min/ideal/max range: a column without a
+            // max (the old detail pane) balloons until the split view can't
+            // satisfy the widths side-by-side, at which point macOS floats the
+            // side panels OVER the content and the dividers stop responding.
+            // The middle workbench is the one column left free to flex.
             NavigationSplitView {
                 SidebarView()
-                    .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+                    .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
             } content: {
                 VSplitView {
                     ScriptPane()
@@ -21,11 +26,12 @@ struct MainView: View {
                     ConsolePane()
                         .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
                 }
-                .navigationSplitViewColumnWidth(min: 480, ideal: 620)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 720)
             } detail: {
                 DetailPane()
-                    .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                    .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 560)
             }
+            .navigationSplitViewStyle(.balanced)
             .navigationTitle("BulkGitHub")
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
