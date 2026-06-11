@@ -29,7 +29,7 @@ struct ResultsPane: View {
             .width(min: 90, ideal: 110)
 
             TableColumn("Repository") { (result: RepoResult) in
-                RepoCell(repo: result.repo)
+                RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
             }
 
             TableColumn("Branch") { (result: RepoResult) in

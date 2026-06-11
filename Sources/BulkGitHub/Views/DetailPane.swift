@@ -109,12 +109,9 @@ struct PlannedActionView: View {
             switch action {
             case .putContent(_, _, _, let before, let after):
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
-            case .createPR(_, _, let body):
-                Text(body)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            case .createBranch:
+            case .createPR, .createBranch:
+                // The summary line is enough — the putContent diffs above
+                // already show what the PR will contain.
                 EmptyView()
             }
         }

@@ -387,6 +387,9 @@ final class AppModel {
         defer { running = false }
         let runPhase = validated.meta.phase
         let runScript = scriptText
+        // A fresh check supersedes the canary choice — it was picked from the
+        // previous result set.
+        if runPhase == .check { canaryRepo = "" }
         runGeneration += 1
         let generation = runGeneration
         resultsByPhase[runPhase] = []
