@@ -56,6 +56,10 @@ final class AppModel {
     /// Per-PR merge approvals, capturing the head SHA approved. Merging
     /// requires the head to still match — host-enforced.
     var approvals: [Approval] = []
+    /// The reviewed plan as applied, per repo — what each job PR changes.
+    /// Survives later dry runs (which replace the working plan) and
+    /// restarts; cleared with the repo's artifacts when its PR is consumed.
+    var appliedPlan: [String: [PlannedAction]] = [:]
     var statusLine: String = "Ready"
     var running = false
     /// True while an ARMED run is executing — drives the loud mode banner.
@@ -115,6 +119,7 @@ final class AppModel {
                 canaryRepo = job.canaryRepo ?? ""
                 artifacts = job.artifacts ?? []
                 approvals = job.approvals ?? []
+                appliedPlan = job.appliedPlans ?? [:]
                 statusLine = job.lastRunStatus ?? "Restored previous job"
             }
         }
@@ -150,6 +155,12 @@ final class AppModel {
         // selecting one inspects its check evidence.
         if phase == .update {
             return resultsByPhase[.check]?.first { $0.id == selectedRepo }
+        }
+        // Merge rows exist before any merge run: selecting one inspects the
+        // PR's receipts. "PR raised" is the true state of an artifact row.
+        if phase == .merge, let row = mergeRows.first(where: { $0.id == selectedRepo }) {
+            return row.result ?? RepoResult(repo: row.repo, status: .prRaised,
+                                            reason: "PR \(row.artifact.name) awaiting merge")
         }
         return nil
     }
@@ -203,6 +214,38 @@ final class AppModel {
                 result: result)
         }
         return order.compactMap { byRepo[$0] }
+    }
+
+    /// Approve every job PR that isn't yet approved, capturing each current
+    /// head SHA.
+    func approveAll() {
+        let pending = mergeRows.filter { !$0.approved }
+        guard !pending.isEmpty else { return }
+        let client = githubClient()
+        Task {
+            var added = 0
+            for row in pending {
+                do {
+                    let pr = try await client.getPR(repo: row.artifact.repo, number: row.number)
+                    approvals.append(Approval(repo: row.artifact.repo,
+                                              prNumber: row.number, headSha: pr.headSha))
+                    added += 1
+                } catch {
+                    statusLine = "Could not approve PR #\(row.number) in \(row.artifact.repo): \(error.localizedDescription)"
+                }
+            }
+            if added > 0 {
+                statusLine = "Approved \(added) PR(s) — merging requires each head to still match"
+                saveNow()
+            }
+        }
+    }
+
+    func clearApprovals() {
+        guard !approvals.isEmpty else { return }
+        approvals.removeAll()
+        statusLine = "All approvals withdrawn"
+        saveNow()
     }
 
     /// Approve (capturing the current head SHA) or withdraw approval.
@@ -574,9 +617,21 @@ final class AppModel {
             }
             artifacts.append(artifact)
         }
+        // The receipts behind each PR: what the armed update actually wrote,
+        // per repo — shown in the merge phase as "what this PR changes".
+        // Fresh PRs also supersede any previous merge-phase outcomes: an old
+        // "merged" badge must not attach to a new PR.
+        if writeMode == .armed, runPhase == .update {
+            for result in outcome.results where result.status == .prRaised {
+                appliedPlan[result.id] = plannedActions[result.id]
+            }
+            resultsByPhase[.merge] = []
+            ranScriptByPhase[.merge] = nil
+        }
         // A merged or cancelled repo's artifacts are consumed: its PR is no
         // longer open and its branch is gone — drop them (and their
-        // approvals) from the registry. The audit trail keeps the history.
+        // approvals and applied plan) from the registry. The audit trail
+        // keeps the history.
         if writeMode == .armed, runPhase == .merge {
             let consumed = Set(outcome.results
                 .filter { [.merged, .cancelled].contains($0.status) }
@@ -584,6 +639,7 @@ final class AppModel {
             if !consumed.isEmpty {
                 artifacts.removeAll { consumed.contains($0.repo) }
                 approvals.removeAll { consumed.contains($0.repo) }
+                for repo in consumed { appliedPlan.removeValue(forKey: repo) }
             }
         }
         if !outcome.state.isEmpty {
@@ -665,6 +721,7 @@ final class AppModel {
         job.canaryRepo = canaryRepo
         job.artifacts = artifacts
         job.approvals = approvals
+        job.appliedPlans = appliedPlan
         job.promptsByPhase = Self.rawKeyed(promptsByPhase)
         job.lastRunStatus = statusLine
         try? store.save(AppStateSnapshot(settings: settings, job: job))

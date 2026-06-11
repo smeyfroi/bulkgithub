@@ -57,6 +57,14 @@ struct DetailPane: View {
                         ArtifactsView(artifacts: repoArtifacts)
                     }
 
+                    // Merge phase: the receipts behind this PR — the reviewed
+                    // diffs as actually applied — so approval doesn't require
+                    // jumping back to the Update screen (or to GitHub).
+                    if model.phase == .merge,
+                       let applied = model.appliedPlan[result.id], !applied.isEmpty {
+                        AppliedChangesView(actions: applied)
+                    }
+
                     // Plan or evidence, never both: once actions are planned,
                     // their diffs are the authoritative "what changes" — the
                     // match evidence below them just read as a second, confusing
@@ -120,6 +128,34 @@ struct ArtifactsView: View {
         }
         .padding(10)
         .background(.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// What this job's PR changes in the repository: the reviewed plan as it was
+/// actually applied — content diffs only, for approval review in the merge
+/// phase.
+struct AppliedChangesView: View {
+    let actions: [PlannedAction]
+
+    private var edits: [PlannedAction] {
+        actions.filter {
+            if case .putContent = $0 { return true }
+            return false
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("What this PR changes", systemImage: "doc.text.magnifyingglass")
+                .font(.headline)
+                .foregroundStyle(.blue)
+
+            ForEach(Array(edits.enumerated()), id: \.offset) { _, action in
+                PlannedActionView(action: action)
+            }
+        }
+        .padding(10)
+        .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

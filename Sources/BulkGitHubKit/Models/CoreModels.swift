@@ -168,6 +168,11 @@ public struct Job: Codable, Identifiable, Sendable {
     public var artifacts: [Artifact]?
     /// User approvals of job PRs for merging (merge phase).
     public var approvals: [Approval]?
+    /// The reviewed plan as actually applied per repo (armed update runs):
+    /// the receipts behind each PR, diffs included, so the merge phase can
+    /// show what a PR changes without re-fetching or depending on the
+    /// current working plan.
+    public var appliedPlans: [String: [PlannedAction]]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {

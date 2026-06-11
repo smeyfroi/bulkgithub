@@ -34,6 +34,23 @@ struct ResultsPane: View {
                 description: Text("Apply an update plan first — the PRs it creates appear here for approval and merging.")
             )
         } else {
+            let approvedCount = model.mergeRows.filter(\.approved).count
+            HStack(spacing: 12) {
+                Text("\(approvedCount) of \(model.mergeRows.count) approved")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Approve all") { model.approveAll() }
+                    .controlSize(.small)
+                    .disabled(model.running || approvedCount == model.mergeRows.count)
+                Button("Clear approvals") { model.clearApprovals() }
+                    .controlSize(.small)
+                    .disabled(model.running || approvedCount == 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .overlay(alignment: .bottom) { Divider() }
+
             Table(model.mergeRows, selection: $model.selectedRepo) {
                 TableColumn("Approved") { (row: AppModel.MergeRow) in
                     Toggle("", isOn: Binding(
