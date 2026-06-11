@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Assets/AppIcon.iconset/icon_256x256.png" width="128" alt="BulkGitHub app icon">
+</p>
+
 # BulkGitHub
 
 A native macOS workbench for finding — and later bulk-updating — repositories
