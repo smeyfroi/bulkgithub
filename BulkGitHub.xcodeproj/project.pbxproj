@@ -30,6 +30,7 @@
 		74C2A201574561400FC7F7D2 /* ResultsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsPane.swift; sourceTree = "<group>"; };
 		8748F350BA2FBF938EAAD686 /* DetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPane.swift; sourceTree = "<group>"; };
 		92EAE0CE27070CB0517E70C7 /* bulkgithub */ = {isa = PBXFileReference; lastKnownFileType = folder; name = bulkgithub; path = .; sourceTree = SOURCE_ROOT; };
+		9D5D5A96C07E8829A14779D2 /* 0002-merge-phase-stays-script-driven.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "0002-merge-phase-stays-script-driven.md"; sourceTree = "<group>"; };
 		AE12C853F496916CB6381059 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		AE76DF2E2EA7C301865BFFA5 /* native-macos-bulkgithub-app-plan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "native-macos-bulkgithub-app-plan.md"; sourceTree = "<group>"; };
 		BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BulkGitHubApp.swift; sourceTree = "<group>"; };
@@ -92,6 +93,7 @@
 			isa = PBXGroup;
 			children = (
 				3F9B3BF5794052EE7D6B4676 /* 0001-javascriptcore-as-embedded-script-runtime.md */,
+				9D5D5A96C07E8829A14779D2 /* 0002-merge-phase-stays-script-driven.md */,
 			);
 			path = decisions;
 			sourceTree = "<group>";
@@ -353,7 +355,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = me.geo.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;
@@ -378,7 +380,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = me.geo.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;
