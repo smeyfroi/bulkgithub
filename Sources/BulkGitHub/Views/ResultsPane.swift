@@ -63,7 +63,7 @@ struct ResultsPane: View {
                             : "Approve this PR for merging (captures the current head SHA)")
                     .disabled(model.running)
                 }
-                .width(min: 60, ideal: 70)
+                .width(min: 55, ideal: 60, max: 70)
 
                 TableColumn("Merge") { (row: AppModel.MergeRow) in
                     if let result = row.result {
@@ -74,11 +74,12 @@ struct ResultsPane: View {
                             .help("No merge run yet")
                     }
                 }
-                .width(min: 90, ideal: 110)
+                .width(min: 80, ideal: 95, max: 130)
 
                 TableColumn("Repository") { (row: AppModel.MergeRow) in
                     RepoCell(repo: row.repo)
                 }
+                .width(min: 140, ideal: 210)
 
                 TableColumn("PR") { (row: AppModel.MergeRow) in
                     if let url = row.artifact.url, let link = URL(string: url) {
@@ -87,7 +88,7 @@ struct ResultsPane: View {
                         Text(row.artifact.name)
                     }
                 }
-                .width(min: 50, ideal: 70)
+                .width(min: 45, ideal: 60, max: 90)
 
                 TableColumn("Detail") { (row: AppModel.MergeRow) in
                     if let result = row.result {
@@ -104,17 +105,18 @@ struct ResultsPane: View {
             TableColumn("Status") { (result: RepoResult) in
                 StatusBadge(status: result.status)
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 80, ideal: 95, max: 130)
 
             TableColumn("Repository") { (result: RepoResult) in
                 RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
             }
+            .width(min: 140, ideal: 210)
 
             TableColumn("Branch") { (result: RepoResult) in
                 Text(result.repo.defaultBranch)
                     .foregroundStyle(.secondary)
             }
-            .width(min: 50, ideal: 70)
+            .width(min: 45, ideal: 60, max: 90)
 
             TableColumn("Detail") { (result: RepoResult) in
                 DetailCell(result: result)
@@ -138,7 +140,7 @@ struct ResultsPane: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 80, ideal: 95, max: 130)
 
             TableColumn("Update") { (row: AppModel.UpdateRow) in
                 if let update = row.update {
@@ -149,17 +151,18 @@ struct ResultsPane: View {
                         .help("No update run yet for this repo")
                 }
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 80, ideal: 95, max: 130)
 
             TableColumn("Repository") { (row: AppModel.UpdateRow) in
                 RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)
             }
+            .width(min: 140, ideal: 210)
 
             TableColumn("Branch") { (row: AppModel.UpdateRow) in
                 Text(row.repo.defaultBranch)
                     .foregroundStyle(.secondary)
             }
-            .width(min: 50, ideal: 70)
+            .width(min: 45, ideal: 60, max: 90)
 
             TableColumn("Detail") { (row: AppModel.UpdateRow) in
                 if let result = row.update ?? row.check {

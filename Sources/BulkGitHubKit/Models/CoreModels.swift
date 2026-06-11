@@ -153,6 +153,7 @@ public struct Job: Codable, Identifiable, Sendable {
     /// Prompt per phase — switching phases must not carry prompts across.
     public var promptsByPhase: [String: String]?
     public var prTitle: String?
+    public var prBody: String?
     public var canaryRepo: String?
     /// Results per phase (keyed by JobPhase rawValue) — check results survive
     /// a switch into update and back. `results` remains the legacy single list.
