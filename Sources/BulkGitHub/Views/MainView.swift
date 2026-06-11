@@ -211,23 +211,30 @@ struct SidebarView: View {
                 Label("Check", systemImage: "magnifyingglass")
                     .tag(JobPhase.check)
                     .help("Prompts generate read-only search scripts")
-                Label("Update (dry run)", systemImage: "pencil")
+                Label("Update", systemImage: "pencil")
                     .tag(JobPhase.update)
-                    .help("Prompts generate dry-run update scripts — nothing reaches GitHub")
+                    .help("Generate update scripts — dry run by default; arm writes via Apply")
                 Label("Merge", systemImage: "arrow.triangle.merge")
                     .tag(JobPhase.merge)
-                    .help("Approve job PRs, then merge scripts act on this job's artifacts only (dry run by default)")
+                    .help("Approve job PRs, then merge scripts act on this job's artifacts only")
             }
 
-            Section("Recipes") {
-                ForEach(RecipeCatalog.all) { recipe in
-                    Button {
-                        model.loadRecipe(recipe)
-                    } label: {
-                        Label(recipe.title, systemImage: recipe.systemImage)
+            // Recipes grouped by the phase they belong to, so it's clear
+            // which ones apply where.
+            ForEach(JobPhase.allCases, id: \.self) { phase in
+                let recipes = RecipeCatalog.all.filter { $0.phase == phase }
+                if !recipes.isEmpty {
+                    Section("\(phase.rawValue.capitalized) recipes") {
+                        ForEach(recipes) { recipe in
+                            Button {
+                                model.loadRecipe(recipe)
+                            } label: {
+                                Label(recipe.title, systemImage: recipe.systemImage)
+                            }
+                            .buttonStyle(.plain)
+                            .help(recipe.prompt)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help(recipe.prompt)
                 }
             }
         }

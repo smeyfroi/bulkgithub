@@ -60,6 +60,13 @@ interface GitHub {
    * before reporting a match. Search indexes are stale and snippet matches
    * are not proof. The defaultBranch on search results is NOT reliable —
    * use gh.getRepo when you need it.
+   *
+   * INCOMPLETE INDEX — do not use this to discover files at a KNOWN path.
+   * Code search covers only the default branch, skips large files, and its
+   * `path:` qualifier frequently returns zero for a file that exists. When
+   * you know the path, enumerate instead: gh.listOrgRepos + gh.getContent,
+   * or gh.listFiles with a glob. Reserve searchCode for genuinely unknown
+   * locations, and treat empty results as "missed", not "absent".
    */
   searchCode(query: string): Promise<Repo[]>;
 

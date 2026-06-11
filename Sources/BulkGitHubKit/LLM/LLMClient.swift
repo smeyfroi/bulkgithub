@@ -127,6 +127,15 @@ public enum PromptLibrary {
     it with gh.getRepo when you only have a name (searchCode results and \
     repo names carried in job state do not have a reliable defaultBranch). \
     Build refs as "heads/" + defaultBranch.
+    17a. When the task names a CONCRETE file path (or a small known set), \
+    discover by ENUMERATION — gh.listOrgRepos then gh.getContent(repo, path), \
+    or gh.listFiles with a glob — NOT gh.searchCode. GitHub code search is an \
+    incomplete index: default-branch-only, size-limited, and its path: \
+    qualifier routinely returns ZERO for a file that genuinely exists. Reserve \
+    gh.searchCode for when you truly don't know where to look, and even then \
+    treat an empty result as "search missed it", never as "nothing matches". \
+    A path-qualified searchCode that finds nothing is the single most common \
+    cause of an empty check run.
     17. Merge scripts (phase "merge") operate ONLY on this job's artifacts: \
     start from gh.listJobPRs (the registry), merge with the headSha those \
     results carry as expectedHeadSha, and delete a branch only after its PR \

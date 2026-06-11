@@ -166,9 +166,13 @@ final class AppModel {
     }
 
     /// The visible results were produced by a different script than the one
-    /// in the editor (regenerated or edited since the run).
+    /// in the editor (regenerated or edited since the run). Suppressed while
+    /// generating or running — the script is mid-change then, so "stale" is
+    /// noise; it reappears once the new script settles unrun. Starting a run
+    /// clears the results, so the banner is gone the moment Run is pressed.
     var resultsAreStale: Bool {
-        guard !results.isEmpty, let ran = ranScriptByPhase[phase] else { return false }
+        guard !generating, !running,
+              !results.isEmpty, let ran = ranScriptByPhase[phase] else { return false }
         return ran != scriptText
     }
 
