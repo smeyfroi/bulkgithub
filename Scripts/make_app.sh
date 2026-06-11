@@ -7,20 +7,25 @@ cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
 APP="dist/BulkGitHub.app"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.2.0}"
 
 swift build -c "$CONFIG"
 
 BIN=".build/$CONFIG/BulkGitHub"
-RESOURCE_BUNDLE=".build/$CONFIG/BulkGitHub_BulkGitHubKit.bundle"
 [[ -x "$BIN" ]] || { echo "missing $BIN" >&2; exit 1; }
-[[ -d "$RESOURCE_BUNDLE" ]] || { echo "missing $RESOURCE_BUNDLE" >&2; exit 1; }
+[[ -d ".build/$CONFIG/BulkGitHub_BulkGitHubKit.bundle" ]] || {
+  echo "missing BulkGitHubKit resource bundle" >&2; exit 1
+}
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/BulkGitHub"
-cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+# Every SwiftPM resource bundle the app links: our Kit (bulkgh.d.ts, tsc,
+# recipes) plus dependencies' (Highlightr ships highlight.js + themes).
+for bundle in .build/"$CONFIG"/*.bundle; do
+  cp -R "$bundle" "$APP/Contents/Resources/"
+done
 if [[ -f Assets/AppIcon.icns ]]; then
   cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi

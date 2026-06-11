@@ -12,7 +12,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
-      - name: Build
+      - name: Build (SwiftPM)
         run: swift build
       - name: Test
         run: swift test
+      - name: Build app (Xcode project)
+        run: |
+          xcodebuild -project BulkGitHub.xcodeproj \
+            -scheme BulkGitHubApp -configuration Debug \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=NO build
