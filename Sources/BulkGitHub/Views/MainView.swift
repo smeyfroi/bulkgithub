@@ -9,29 +9,49 @@ struct MainView: View {
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
         VStack(spacing: 0) {
-            // Every column gets a full min/ideal/max range: a column without a
-            // max (the old detail pane) balloons until the split view can't
-            // satisfy the widths side-by-side, at which point macOS floats the
-            // side panels OVER the content and the dividers stop responding.
-            // The middle workbench is the one column left free to flex.
-            NavigationSplitView {
+            // Deterministic three-pane tiling via HSplitView, NOT
+            // NavigationSplitView: on macOS 26 the navigation sidebars are
+            // glass panels floating over a full-width content layer, and the
+            // safe-area insets that should keep content out from under them
+            // are lost inside VSplitView — SwiftUI rows ended up laid out
+            // under both panels (AppKit-backed editor/table re-inset
+            // themselves, which is why only some rows looked broken).
+            // HSplitView has no overlay layer: panes are always side-by-side
+            // and dividers always drag. The middle workbench is the only
+            // pane free to flex.
+            // HSplitView/VSplitView panes are not greedy: each needs an
+            // explicit max to fill its slot instead of collapsing to its
+            // ideal size and centering.
+            HSplitView {
                 SidebarView()
-                    .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
-            } content: {
-                VSplitView {
-                    ScriptPane()
-                        .frame(minHeight: 240)
-                    ResultsPane()
-                        .frame(minHeight: 160)
-                    ConsolePane()
-                        .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
+                    .frame(minWidth: 170, idealWidth: 210, maxWidth: 300,
+                           maxHeight: .infinity)
+                // Split views measure children with unspecified proposals, so
+                // a child with a wide ideal (the code editor's longest line)
+                // can win the pane width and overflow-centre past both edges.
+                // Pin every pane to the measured column width instead.
+                GeometryReader { geo in
+                    VSplitView {
+                        ScriptPane()
+                            .frame(width: geo.size.width)
+                            .frame(minHeight: 240, maxHeight: .infinity)
+                        ResultsPane()
+                            .frame(width: geo.size.width)
+                            .frame(minHeight: 160, maxHeight: .infinity)
+                        ConsolePane()
+                            .frame(width: geo.size.width)
+                            .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
+                    }
                 }
-                .navigationSplitViewColumnWidth(min: 480, ideal: 720)
-            } detail: {
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
                 DetailPane()
-                    .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 560)
+                    .frame(minWidth: 260, idealWidth: 340, maxWidth: 560,
+                           maxHeight: .infinity)
             }
-            .navigationSplitViewStyle(.balanced)
+            // HSplitView is not greedy — without this it collapses to its
+            // children's minimum height inside the VStack.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("BulkGitHub")
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
