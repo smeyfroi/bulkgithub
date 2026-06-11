@@ -43,6 +43,9 @@ final class AppModel {
     var results: [RepoResult] { resultsByPhase[phase] ?? [] }
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
+    /// Cumulative across all runs of this job (capped), each run prefixed
+    /// with a synthetic boundary event — the job's full audit trail.
+    var auditTrail: [AuditEvent] = []
     var plannedActions: [String: [PlannedAction]] = [:]
     /// The phase whose dry run produced plannedActions: the update plan must
     /// not leak into the merge phase's Apply flow (and vice versa).
@@ -123,6 +126,7 @@ final class AppModel {
                 paramsDraft = paramsByPhase[job.phase] ?? [:]
                 logs = job.logs
                 auditEvents = job.auditEvents
+                auditTrail = job.auditTrail ?? []
                 plannedActions = job.plannedActions ?? [:]
                 plannedActionsPhase = job.planPhase.flatMap(JobPhase.init(rawValue:))
                     ?? (plannedActions.isEmpty ? nil : .update)  // legacy saves were update-only
@@ -338,6 +342,7 @@ final class AppModel {
         quotaText = nil
         logs = []
         auditEvents = []
+        auditTrail = []
         writeArmed = false
         statusLine = settings.useFixtureGitHub
             ? "Switched to fixture data — workflow state cleared, scripts kept"
@@ -640,10 +645,13 @@ final class AppModel {
                 configuration.targetRepos = [fullName]
             }
         }
-        if runPhase == .merge {
-            // Merge scripts see only the job's own artifacts, and merging
-            // requires these user approvals (host-enforced).
+        if runPhase == .merge || writeMode == .armed {
+            // The job's receipts: merge scripts are scoped to them, and
+            // armed update runs use them to RESUME safely onto branches/PRs
+            // this job created earlier (never onto anyone else's).
             configuration.artifactRegistry = artifacts
+        }
+        if runPhase == .merge {
             configuration.approvals = approvals
         }
         let outcome = await engine.run(javaScript: validated.javaScript,
@@ -666,6 +674,15 @@ final class AppModel {
         ranScriptByPhase[runPhase] = runScript
         logs = outcome.logs
         auditEvents = outcome.auditEvents
+        // The cumulative trail: boundary event, then the run's events.
+        let mode = writeMode == .armed ? "ARMED"
+            : (runPhase == .check ? "read-only" : "dry run")
+        auditTrail.append(AuditEvent(kind: "run", repo: nil,
+                                     detail: "\(runPhase.rawValue) (\(mode), \(settings.useFixtureGitHub ? "fixture" : "live")) — \(outcome.status.label)"))
+        auditTrail.append(contentsOf: outcome.auditEvents)
+        if auditTrail.count > 5000 {
+            auditTrail.removeFirst(auditTrail.count - 5000)
+        }
         if runPhase != .check, writeMode == .dryRun {
             plannedActions = outcome.plannedActions
             plannedActionsPhase = outcome.plannedActions.isEmpty ? nil : runPhase
@@ -776,6 +793,7 @@ final class AppModel {
         job.paramsByPhase = Self.rawKeyed(paramsByPhase)
         job.logs = logs
         job.auditEvents = auditEvents
+        job.auditTrail = auditTrail
         job.plannedActions = plannedActions
         job.planPhase = plannedActionsPhase?.rawValue
         job.state = jobState

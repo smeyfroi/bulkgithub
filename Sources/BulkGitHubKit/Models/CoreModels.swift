@@ -174,6 +174,10 @@ public struct Job: Codable, Identifiable, Sendable {
     /// show what a PR changes without re-fetching or depending on the
     /// current working plan.
     public var appliedPlans: [String: [PlannedAction]]?
+    /// Cumulative audit trail across ALL of this job's runs (capped), with a
+    /// synthetic "run" event marking each run boundary. `auditEvents` remains
+    /// the last run only.
+    public var auditTrail: [AuditEvent]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {

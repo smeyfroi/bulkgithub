@@ -276,10 +276,47 @@ struct StatusBadge: View {
     }
 }
 
+/// The bottom pane: the last run's log, and the job's full audit trail —
+/// every API call and write across all runs, run boundaries marked.
 struct ConsolePane: View {
     @Environment(AppModel.self) private var model
+    @State private var showAudit = false
+    @State private var filter = ""
 
     var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Picker("", selection: $showAudit) {
+                    Text("Log").tag(false)
+                    Text("Audit").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 130)
+                if showAudit {
+                    TextField("Filter by kind, repo, or text…", text: $filter)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .frame(maxWidth: 260)
+                    Text("\(filteredAudit.count) event(s)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .overlay(alignment: .bottom) { Divider() }
+
+            if showAudit {
+                auditList
+            } else {
+                logList
+            }
+        }
+    }
+
+    private var logList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
@@ -301,5 +338,77 @@ struct ConsolePane: View {
                 }
             }
         }
+    }
+
+    private var filteredAudit: [AuditEvent] {
+        guard !filter.isEmpty else { return model.auditTrail }
+        let needle = filter.lowercased()
+        return model.auditTrail.filter {
+            $0.kind.lowercased().contains(needle)
+                || ($0.repo?.lowercased().contains(needle) ?? false)
+                || $0.detail.lowercased().contains(needle)
+        }
+    }
+
+    private var auditList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(filteredAudit) { event in
+                        AuditRow(event: event)
+                            .id(event.id)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
+            .background(.black.opacity(0.04))
+            .onAppear {
+                if let last = filteredAudit.last { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
+            .onChange(of: model.auditTrail.count) {
+                if let last = filteredAudit.last { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
+        }
+    }
+}
+
+struct AuditRow: View {
+    let event: AuditEvent
+
+    private static let time: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(Self.time.string(from: event.timestamp))
+                .foregroundStyle(.tertiary)
+            Text(event.kind)
+                .fontWeight(event.kind == "run" || event.kind.hasPrefix("write.") ? .bold : .regular)
+                .foregroundStyle(kindColor)
+                .frame(minWidth: 110, alignment: .leading)
+            if let repo = event.repo {
+                Text(repo)
+                    .foregroundStyle(.primary)
+            }
+            Text(event.detail)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .textSelection(.enabled)
+        .padding(.vertical, event.kind == "run" ? 3 : 0)
+        .background(event.kind == "run" ? Color.primary.opacity(0.05) : .clear)
+    }
+
+    private var kindColor: Color {
+        if event.kind == "run" { return .primary }
+        if event.kind.hasPrefix("write.") { return .red }
+        if event.kind.hasPrefix("plan.") { return .purple }
+        if event.kind.hasPrefix("job.") { return .blue }
+        return .secondary
     }
 }

@@ -326,8 +326,10 @@ enum HostBindings {
     /// 4. drift guard (putContent: the remote file must still match the
     ///    plan's recorded "before", and the script's output must match the
     ///    reviewed "after"),
-    /// 5. idempotency (existing branch/PR halts the repo instead of
-    ///    duplicating).
+    /// 5. idempotency with registry-gated RESUME: an existing branch/PR that
+    ///    THIS job created (it holds the artifact receipt) is continued on —
+    ///    already-applied steps are skipped, missing ones executed; anything
+    ///    with the same name the job did NOT create halts the repo.
     /// "What you reviewed is exactly what gets written, or nothing."
     private static func installArmedWrites(on gh: JSValue, github: GitHubClient,
                                            collector: JobCollector,
@@ -363,12 +365,22 @@ enum HostBindings {
                                        reason: "script deviated from the reviewed plan (createBranch \(name)) — nothing written")
                     throw GitHubClientError.http(409, "plan deviation: createBranch \(name) is not the next reviewed action for \(fullName)")
                 }
-                if try await github.getRef(repo: fullName, ref: "heads/\(name)") != nil {
-                    collector.haltRepo(fullName, status: .branchExists,
-                                       reason: "branch \(name) already exists — nothing written (resume arrives in a later phase)")
+                if let existingSha = try await github.getRef(repo: fullName, ref: "heads/\(name)") {
+                    // RESUME is registry-gated: only a branch THIS job
+                    // created (it holds the receipt) may be continued on.
+                    // Anything else with the same name is someone else's
+                    // work — halt, touch nothing.
+                    guard collector.isRegistryBranch(repo: fullName, name: name) else {
+                        collector.haltRepo(fullName, status: .branchExists,
+                                           reason: "branch \(name) already exists but was not created by this job — nothing written")
+                        collector.audit(kind: "write.createBranch", repo: fullName,
+                                        detail: "\(name) exists, not in this job's registry — halted")
+                        throw GitHubClientError.http(409, "branch \(name) already exists in \(fullName)")
+                    }
+                    collector.consumeNextAction(repo: fullName)
                     collector.audit(kind: "write.createBranch", repo: fullName,
-                                    detail: "\(name) already exists — halted")
-                    throw GitHubClientError.http(409, "branch \(name) already exists in \(fullName)")
+                                    detail: "\(name) already exists — resuming on it (ARMED)")
+                    return ["sha": existingSha]
                 }
                 let newSha = try await github.createBranch(repo: fullName, name: name, fromSha: sha)
                 collector.consumeNextAction(repo: fullName)
@@ -404,6 +416,15 @@ enum HostBindings {
                     collector.haltRepo(fullName, status: .conflicted,
                                        reason: "script deviated from the reviewed plan (putContent \(path)) — nothing written")
                     throw GitHubClientError.http(409, "plan deviation: putContent \(path) is not the next reviewed action for \(fullName)")
+                }
+                // RESUME: an earlier armed run already committed exactly the
+                // reviewed content to the job branch — skip, don't re-write.
+                if let onBranch = try? await github.getContent(repo: fullName, path: path, ref: branch),
+                   onBranch == expectedAfter {
+                    collector.consumeNextAction(repo: fullName)
+                    collector.audit(kind: "write.putContent", repo: fullName,
+                                    detail: "\(path) on \(branch) already matches the reviewed plan — resumed, nothing written")
+                    return nil
                 }
                 // Drift guard, both directions: the remote must still match
                 // what the review saw, and the script must produce exactly
@@ -453,8 +474,17 @@ enum HostBindings {
                     throw GitHubClientError.http(409, "plan deviation: createPR from \(head) does not match the reviewed plan for \(fullName)")
                 }
                 if let existing = try await github.listPRs(repo: fullName, head: head, state: "open").first {
+                    // RESUME: the job's own PR from an earlier armed run.
+                    if collector.isRegistryPR(repo: fullName, number: existing.number) {
+                        collector.consumeNextAction(repo: fullName)
+                        collector.upsert(repo: collector.repo(named: fullName), status: .prRaised,
+                                         reason: "PR #\(existing.number) already open — resumed: \(existing.url)")
+                        collector.audit(kind: "write.createPR", repo: fullName,
+                                        detail: "#\(existing.number) already open — resumed (ARMED)")
+                        return existing.scriptValue
+                    }
                     collector.haltRepo(fullName, status: .prExists,
-                                       reason: "PR #\(existing.number) already open for \(head): \(existing.url)")
+                                       reason: "PR #\(existing.number) already open for \(head) but not created by this job: \(existing.url)")
                     throw GitHubClientError.http(409, "a PR already exists for \(head) in \(fullName)")
                 }
                 // Authoritative base branch — never assume main.

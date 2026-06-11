@@ -34,11 +34,13 @@ struct ArmedRunTests {
     }
 
     private func armedConfiguration(targets: Set<String>,
-                                    plan: [String: [PlannedAction]]) -> EngineConfiguration {
+                                    plan: [String: [PlannedAction]],
+                                    registry: [Artifact] = []) -> EngineConfiguration {
         var configuration = EngineConfiguration()
         configuration.writeMode = .armed
         configuration.targetRepos = targets
         configuration.referencePlan = plan
+        configuration.artifactRegistry = registry
         return configuration
     }
 
@@ -182,8 +184,8 @@ struct ArmedRunTests {
         #expect(armed.artifacts.allSatisfy { $0.repo == "geome/data-pipeline" })
     }
 
-    @Test("idempotency: a second armed run halts on existing artifacts, no duplicates")
-    func idempotentRerun() async throws {
+    @Test("resume: a second armed run continues through the job's own artifacts, no duplicates")
+    func resumeRerun() async throws {
         let client = FixtureGitHubClient.demo()
         let (validated, state, plan) = try await dryRunPlan(client: client)
         let configuration = armedConfiguration(
@@ -196,17 +198,82 @@ struct ArmedRunTests {
                                              initialState: state, onEvent: { _ in })
         #expect(first.artifacts.count == 4)
 
+        // Second run carries the first run's receipts: everything resumes —
+        // branch reused, contents already match, PR already open — ending
+        // prRaised with nothing new created.
+        let rerunConfig = armedConfiguration(
+            targets: ["geome/web-frontend", "geome/data-pipeline"], plan: plan,
+            registry: first.artifacts)
         let second = await ScriptEngine().run(javaScript: validated.javaScript,
                                               phase: .update, params: validated.meta.params,
                                               github: client, organisation: "geome",
-                                              configuration: configuration,
+                                              configuration: rerunConfig,
                                               initialState: state, onEvent: { _ in })
         #expect(second.status == .completed)
         #expect(second.artifacts.isEmpty)
         for result in second.results where ["geome/web-frontend", "geome/data-pipeline"].contains(result.id) {
-            #expect(result.status == .branchExists)
+            #expect(result.status == .prRaised)
+            #expect(result.reason?.contains("resumed") == true)
         }
         #expect(client.createdPRs.count == 2)  // still just the first run's
+
+        let resumes = second.auditEvents.filter { $0.detail.contains("resum") }
+        #expect(resumes.count == 6)  // 2 × (branch + put + PR)
+    }
+
+    @Test("resume completes a partially-applied repo (crash after branch creation)")
+    func resumePartialApply() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (validated, state, plan) = try await dryRunPlan(client: client)
+
+        // Simulate a run that died right after creating web-frontend's
+        // branch: the branch exists and the job holds its receipt; no
+        // content was committed, no PR opened.
+        let branch = "bulkgh/remove-keypair-reference"
+        _ = try await client.createBranch(repo: "geome/web-frontend", name: branch,
+                                          fromSha: "deadbeef")
+        let registry = [Artifact(kind: .branch, repo: "geome/web-frontend", name: branch)]
+
+        let armed = await ScriptEngine().run(javaScript: validated.javaScript,
+                                             phase: .update, params: validated.meta.params,
+                                             github: client, organisation: "geome",
+                                             configuration: armedConfiguration(
+                                                targets: ["geome/web-frontend", "geome/data-pipeline"],
+                                                plan: plan, registry: registry),
+                                             initialState: state, onEvent: { _ in })
+        #expect(armed.status == .completed)
+        var byRepo: [String: RepoResult] = [:]
+        for result in armed.results { byRepo[result.id] = result }
+        #expect(byRepo["geome/web-frontend"]?.status == .prRaised)
+        #expect(byRepo["geome/data-pipeline"]?.status == .prRaised)
+        // The resumed repo got its missing content and PR for real.
+        #expect(client.branchContent(repo: "geome/web-frontend", branch: branch,
+                                     path: "deploy/infra.json")?.contains("keypair-1") == false)
+        #expect(client.createdPRs.count == 2)
+        // Branch reused, not re-created: only the PR artifact is new for it.
+        #expect(armed.artifacts.filter { $0.repo == "geome/web-frontend" }.map(\.kind) == [.pullRequest])
+    }
+
+    @Test("a same-named branch the job did NOT create halts the repo")
+    func foreignBranchHalts() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (validated, state, plan) = try await dryRunPlan(client: client)
+        _ = try await client.createBranch(repo: "geome/web-frontend",
+                                          name: "bulkgh/remove-keypair-reference",
+                                          fromSha: "someoneelse")
+
+        // No receipt for that branch in the registry → halt, touch nothing.
+        let armed = await ScriptEngine().run(javaScript: validated.javaScript,
+                                             phase: .update, params: validated.meta.params,
+                                             github: client, organisation: "geome",
+                                             configuration: armedConfiguration(
+                                                targets: ["geome/web-frontend", "geome/data-pipeline"],
+                                                plan: plan),
+                                             initialState: state, onEvent: { _ in })
+        let web = armed.results.first { $0.id == "geome/web-frontend" }
+        #expect(web?.status == .branchExists)
+        #expect(web?.reason?.contains("not created by this job") == true)
+        #expect(client.createdPRs.allSatisfy { $0.repo != "geome/web-frontend" })
     }
 
     @Test("armed runs refuse to start without targets or a reviewed plan")
