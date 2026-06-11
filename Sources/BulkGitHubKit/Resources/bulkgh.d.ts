@@ -58,6 +58,17 @@ interface GitHub {
    */
   getContent(repo: Repo | string, path: string, ref?: string): Promise<string | null>;
 
+  /**
+   * File paths in the repository tree at ref (default branch HEAD when ref is
+   * omitted), optionally filtered by a glob: `*` matches within one path
+   * segment, `**` spans path segments (prefix a pattern with two asterisks
+   * and a slash to match at any depth), plus `?` and `[abc]`. The listing
+   * costs one API call — use it to find files, then gh.getContent to fetch
+   * the ones that matter. Very large repositories may be truncated by the
+   * GitHub tree API.
+   */
+  listFiles(repo: Repo | string, glob?: string, ref?: string): Promise<string[]>;
+
   /** Resolve a ref (e.g. "heads/main") to its SHA, or null if absent. */
   getRef(repo: Repo | string, ref: string): Promise<{ sha: string } | null>;
 

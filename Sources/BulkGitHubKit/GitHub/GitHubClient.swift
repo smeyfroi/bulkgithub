@@ -29,6 +29,9 @@ public protocol GitHubClient: Sendable {
     func searchCode(org: String, query: String) async throws -> [RepoRef]
     /// Returns nil when the file does not exist at that path/ref.
     func getContent(repo: String, path: String, ref: String?) async throws -> String?
+    /// All blob paths in the repository tree at ref (default branch HEAD when
+    /// nil). Glob filtering happens host-side — GitHub has no glob endpoint.
+    func listFiles(repo: String, ref: String?) async throws -> [String]
     /// Returns the SHA for a ref (e.g. "heads/main"), or nil if the ref does not exist.
     func getRef(repo: String, ref: String) async throws -> String?
     func listPRs(repo: String, head: String?, state: String) async throws -> [PullRequestRef]

@@ -16,6 +16,10 @@ public enum LLMClientError: LocalizedError {
     case rateLimited(retryAfter: Double?)
     case invalidResponse(String)
     case network(String)
+    /// The model declined to write a script because the host API lacks a
+    /// required capability, and reported what it needs instead. This is the
+    /// desired behaviour, not a failure — surface the report to the user.
+    case capabilityGap(String)
 
     public var errorDescription: String? {
         switch self {
@@ -25,6 +29,7 @@ public enum LLMClientError: LocalizedError {
             return "Anthropic API rate limited" + (after.map { ", retry after \(Int($0))s" } ?? "")
         case .invalidResponse(let message): return "Unexpected Anthropic response: \(message)"
         case .network(let message): return "Network error: \(message)"
+        case .capabilityGap(let report): return "Capability gap reported by the model: \(report)"
         }
     }
 }
@@ -64,6 +69,15 @@ public enum PromptLibrary {
     world, and the script runs in a sandboxed JavaScriptCore context.
     10. Prefer Promise.all fan-out only when per-repo work is independent; the \
     host limits concurrency, so plain loops are fine too.
+    11. To work across many files in a repository, use gh.listFiles with a \
+    glob (one API call), then gh.getContent for the files that matter.
+    12. If the request requires capabilities the host API does not provide — \
+    other endpoints, write operations, history/commits/issues, data the \
+    surface cannot reach — do NOT improvise workarounds or approximate the \
+    request with what exists. Report the gap instead (see response format): \
+    state what the request needs, which host capability is missing, and the \
+    closest task that IS achievable today, if any. A clear gap report is the \
+    correct, expected output in this situation, not a failure.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {
@@ -83,9 +97,27 @@ public enum PromptLibrary {
         \(apiDeclaration)
         ```
 
-        Respond with a single fenced ```typescript code block containing the \
-        complete script and nothing else. No prose before or after.
+        Respond with exactly one fenced code block and no prose outside it:
+        - ```typescript — the complete script, when the request is achievable;
+        - ```capability-gap — the report described in rule 12, when it is not.
         """
+    }
+
+    public enum GenerationOutcome: Sendable {
+        case script(String)
+        case capabilityGap(String)
+    }
+
+    /// Distinguishes a script response from a capability-gap report
+    /// (house rule 12).
+    public static func parseGeneration(from response: String) -> GenerationOutcome {
+        let gapPattern = #"```capability-gap\s*\n([\s\S]*?)```"#
+        if let regex = try? NSRegularExpression(pattern: gapPattern),
+           let match = regex.firstMatch(in: response, range: NSRange(response.startIndex..., in: response)),
+           let range = Range(match.range(at: 1), in: response) {
+            return .capabilityGap(String(response[range]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return .script(extractCode(from: response))
     }
 
     /// Pulls the script out of a fenced code block; falls back to the whole

@@ -123,6 +123,23 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(getContent, to: AnyObject.self),
                      forKeyedSubscript: "getContent" as NSString)
 
+        let listFiles: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, globValue, refValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("listFiles: repo (object or \"owner/name\") is required")
+            }
+            let glob = stringArg(globValue)
+            let ref = stringArg(refValue)
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let all = try await github.listFiles(repo: fullName, ref: ref)
+                let paths = glob.map { GlobMatcher.filter(all, glob: $0) } ?? all
+                collector.audit(kind: "gh.listFiles", repo: fullName,
+                                detail: "\(glob ?? "(all)") → \(paths.count) of \(all.count) files")
+                return paths
+            }
+        }
+        gh.setObject(unsafeBitCast(listFiles, to: AnyObject.self),
+                     forKeyedSubscript: "listFiles" as NSString)
+
         let getRef: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, refValue in
             guard let fullName = repoName(repoValue), let ref = stringArg(refValue) else {
                 return rejectedPromise("getRef: repo and ref are required")

@@ -170,6 +170,22 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         return text
     }
 
+    public func listFiles(repo: String, ref: String?) async throws -> [String] {
+        // Git Trees API with recursive=1: one call for the whole tree. GitHub
+        // truncates beyond ~100k entries / 7MB; acceptable for organisation
+        // repos, revisit with per-directory walking if it ever bites.
+        let treeRef = ref ?? "HEAD"
+        let json = try await fetchJSON(try request(path: "repos/\(repo)/git/trees/\(treeRef)",
+                                                   query: [URLQueryItem(name: "recursive", value: "1")]))
+        guard let dict = json as? [String: Any],
+              let tree = dict["tree"] as? [[String: Any]] else {
+            throw GitHubClientError.invalidResponse("tree API returned unexpected shape")
+        }
+        return tree.compactMap { node in
+            (node["type"] as? String) == "blob" ? node["path"] as? String : nil
+        }
+    }
+
     public func getRef(repo: String, ref: String) async throws -> String? {
         let json = try await fetchJSON(try request(path: "repos/\(repo)/git/ref/\(ref)"), allow404: true)
         guard let json else { return nil }

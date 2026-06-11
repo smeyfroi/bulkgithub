@@ -122,7 +122,12 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
             let stop = (json["stop_reason"] as? String) ?? "unknown"
             throw LLMClientError.invalidResponse("no text content (stop_reason: \(stop))")
         }
-        return PromptLibrary.extractCode(from: text)
+        switch PromptLibrary.parseGeneration(from: text) {
+        case .script(let script):
+            return script
+        case .capabilityGap(let report):
+            throw LLMClientError.capabilityGap(report)
+        }
     }
 
     private static func errorMessage(from data: Data) -> String? {

@@ -96,6 +96,13 @@ final class AppModel {
                 statusLine = "Script generated — review before running"
                 generating = false
                 await validate()
+            } catch LLMClientError.capabilityGap(let report) {
+                statusLine = "Capability gap — the model needs host APIs we don't offer (details in console)"
+                logs.append("◆ The model reports this request needs capabilities the host API does not provide:")
+                for line in report.split(separator: "\n", omittingEmptySubsequences: false) {
+                    logs.append("  " + String(line))
+                }
+                generating = false
             } catch {
                 statusLine = "Generation failed: \(error.localizedDescription)"
                 generating = false

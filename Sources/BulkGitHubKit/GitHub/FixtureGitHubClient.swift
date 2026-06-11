@@ -66,6 +66,18 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         return files[path]
     }
 
+    public func listFiles(repo: String, ref: String?) async throws -> [String] {
+        record("listFiles(\(repo))")
+        try await pause()
+        if let message = errorInjections[repo] {
+            throw GitHubClientError.network(message)
+        }
+        guard let files = contents[repo] else {
+            throw GitHubClientError.notFound("repository \(repo)")
+        }
+        return files.keys.sorted()
+    }
+
     public func getRef(repo: String, ref: String) async throws -> String? {
         record("getRef(\(repo), \(ref))")
         try await pause()
