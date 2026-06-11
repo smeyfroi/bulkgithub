@@ -23,7 +23,14 @@ final class AppModel {
     /// update runs so they don't repeat the search.
     var jobState: [String: String] = [:]
     var quotaText: String?
+    /// Each phase is its own workspace — prompt, script, and params swap
+    /// together on a phase switch, so editing the update script can never
+    /// make check state look stale (and vice versa). The check → update
+    /// links that remain are deliberate: carried job state and the funnel
+    /// rows in the update table.
     private var promptsByPhase: [JobPhase: String] = [:]
+    private var scriptsByPhase: [JobPhase: String] = [:]
+    private var paramsByPhase: [JobPhase: [String: String]] = [:]
     var diagnostics: [Diagnostic] = []
     /// Results are kept per phase: switching Check ↔ Update shows each
     /// phase's own last run instead of leaking one phase's table into the
@@ -59,51 +66,54 @@ final class AppModel {
 
     init(credentials: CredentialStore = KeychainCredentialStore()) {
         self.credentials = credentials
+        var restoredJob = false
         if let snapshot = store.load() {
             settings = snapshot.settings
             if let job = snapshot.job {
+                restoredJob = true
                 phase = job.phase
-                prompt = job.prompt
-                scriptText = job.scriptSource
-                paramsDraft = job.params
-                if let saved = job.resultsByPhase {
-                    for (key, value) in saved {
-                        if let savedPhase = JobPhase(rawValue: key) {
-                            resultsByPhase[savedPhase] = value
-                        }
-                    }
-                } else if !job.results.isEmpty {
-                    // Pre-per-phase save: attribute the single list to the
-                    // job's phase, produced by the saved script.
+                promptsByPhase = Self.byPhase(job.promptsByPhase)
+                scriptsByPhase = Self.byPhase(job.scriptsByPhase)
+                paramsByPhase = Self.byPhase(job.paramsByPhase)
+                resultsByPhase = Self.byPhase(job.resultsByPhase)
+                ranScriptByPhase = Self.byPhase(job.ranScriptByPhase)
+                // Pre-per-phase saves: attribute the legacy single slots to
+                // the job's phase.
+                if scriptsByPhase.isEmpty { scriptsByPhase[job.phase] = job.scriptSource }
+                if paramsByPhase.isEmpty { paramsByPhase[job.phase] = job.params }
+                if promptsByPhase.isEmpty { promptsByPhase[job.phase] = job.prompt }
+                if resultsByPhase.isEmpty, !job.results.isEmpty {
                     resultsByPhase[job.phase] = job.results
                     ranScriptByPhase[job.phase] = job.scriptSource
                 }
-                if let saved = job.ranScriptByPhase {
-                    for (key, value) in saved {
-                        if let savedPhase = JobPhase(rawValue: key) {
-                            ranScriptByPhase[savedPhase] = value
-                        }
-                    }
-                }
+                prompt = promptsByPhase[job.phase] ?? ""
+                scriptText = scriptsByPhase[job.phase] ?? ""
+                paramsDraft = paramsByPhase[job.phase] ?? [:]
                 logs = job.logs
                 auditEvents = job.auditEvents
                 plannedActions = job.plannedActions ?? [:]
                 jobState = job.state ?? [:]
                 prTitle = job.prTitle ?? ""
                 canaryRepo = job.canaryRepo ?? ""
-                if let saved = job.promptsByPhase {
-                    for (key, value) in saved {
-                        if let savedPhase = JobPhase(rawValue: key) {
-                            promptsByPhase[savedPhase] = value
-                        }
-                    }
-                }
                 statusLine = job.lastRunStatus ?? "Restored previous job"
             }
         }
-        if scriptText.isEmpty {
+        if !restoredJob {
             loadGoldenRecipe()
         }
+    }
+
+    private static func byPhase<T>(_ raw: [String: T]?) -> [JobPhase: T] {
+        guard let raw else { return [:] }
+        var mapped: [JobPhase: T] = [:]
+        for (key, value) in raw {
+            if let phase = JobPhase(rawValue: key) { mapped[phase] = value }
+        }
+        return mapped
+    }
+
+    private static func rawKeyed<T>(_ map: [JobPhase: T]) -> [String: T] {
+        Dictionary(uniqueKeysWithValues: map.map { ($0.key.rawValue, $0.value) })
     }
 
     var typeCheckingAvailable: Bool { typescript != nil }
@@ -181,11 +191,12 @@ final class AppModel {
 
     func setPhase(_ newPhase: JobPhase) {
         guard newPhase != phase else { return }
-        // Prompts are per phase: an update prompt starts empty rather than
-        // inheriting the check prompt.
-        promptsByPhase[phase] = prompt
+        // Each phase is a separate workspace: prompt, script, and params swap
+        // together. An update workspace starts empty rather than inheriting
+        // the check script.
+        stashWorkspace()
         phase = newPhase
-        prompt = promptsByPhase[newPhase] ?? ""
+        restoreWorkspace()
         switch newPhase {
         case .check:
             statusLine = "Check phase — prompts generate read-only search scripts"
@@ -196,13 +207,29 @@ final class AppModel {
         }
     }
 
+    private func stashWorkspace() {
+        promptsByPhase[phase] = prompt
+        scriptsByPhase[phase] = scriptText
+        paramsByPhase[phase] = paramsDraft
+    }
+
+    private func restoreWorkspace() {
+        prompt = promptsByPhase[phase] ?? ""
+        scriptText = scriptsByPhase[phase] ?? ""
+        paramsDraft = paramsByPhase[phase] ?? [:]
+        diagnostics = []
+    }
+
     func loadRecipe(_ recipe: Recipe) {
         guard let source = recipe.source else { return }
-        promptsByPhase[phase] = prompt
+        if recipe.phase != phase {
+            stashWorkspace()
+            phase = recipe.phase
+        }
         scriptText = source
-        phase = recipe.phase
         prompt = recipe.prompt
         promptsByPhase[recipe.phase] = recipe.prompt
+        scriptsByPhase[recipe.phase] = source
         diagnostics = []
         statusLine = "Loaded recipe — Check to type-check, Run to execute"
     }
@@ -326,6 +353,9 @@ final class AppModel {
                 merged[key] = value
             }
             paramsDraft = merged
+            // A script declaring a different phase moves there WITH the
+            // current buffer (no workspace swap): the script, prompt, and
+            // params on screen belong to the declared phase now.
             phase = validated.meta.phase
             // Two-way sync with the explicit PR-title field: an explicit
             // title wins; otherwise the script's (auto)generated one shows.
@@ -363,7 +393,6 @@ final class AppModel {
         logs = []
         auditEvents = []
         if runPhase == .update { plannedActions = [:] }
-        selectedRepo = nil
         statusLine = "Running…"
         var params = paramsDraft
         if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
@@ -404,8 +433,10 @@ final class AppModel {
             logs.append("◆ GitHub \(quotaText) requests remaining")
         }
         let plannedRepos = outcome.results.filter { $0.status == .planned }
-        if let first = plannedRepos.first {
-            selectedRepo = first.id
+        if !plannedRepos.isEmpty {
+            // Keep the user's selection (e.g. the canary they were
+            // inspecting); only auto-select when nothing was chosen.
+            if selectedRepo == nil { selectedRepo = plannedRepos.first?.id }
             statusLine = "Run \(outcome.status.label) — \(plannedRepos.count) repo(s) planned; dry-run diffs in the right panel"
         } else {
             statusLine = "Run \(outcome.status.label)"
@@ -441,23 +472,22 @@ final class AppModel {
     // MARK: Persistence
 
     func saveNow() {
+        stashWorkspace()
         var job = Job(prompt: prompt, phase: phase)
         job.scriptSource = scriptText
         job.params = paramsDraft
         job.results = results
-        job.resultsByPhase = Dictionary(uniqueKeysWithValues:
-            resultsByPhase.map { ($0.key.rawValue, $0.value) })
-        job.ranScriptByPhase = Dictionary(uniqueKeysWithValues:
-            ranScriptByPhase.map { ($0.key.rawValue, $0.value) })
+        job.resultsByPhase = Self.rawKeyed(resultsByPhase)
+        job.ranScriptByPhase = Self.rawKeyed(ranScriptByPhase)
+        job.scriptsByPhase = Self.rawKeyed(scriptsByPhase)
+        job.paramsByPhase = Self.rawKeyed(paramsByPhase)
         job.logs = logs
         job.auditEvents = auditEvents
         job.plannedActions = plannedActions
         job.state = jobState
         job.prTitle = prTitle
         job.canaryRepo = canaryRepo
-        var prompts = promptsByPhase
-        prompts[phase] = prompt
-        job.promptsByPhase = Dictionary(uniqueKeysWithValues: prompts.map { ($0.key.rawValue, $0.value) })
+        job.promptsByPhase = Self.rawKeyed(promptsByPhase)
         job.lastRunStatus = statusLine
         try? store.save(AppStateSnapshot(settings: settings, job: job))
     }

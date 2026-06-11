@@ -158,6 +158,10 @@ public struct Job: Codable, Identifiable, Sendable {
     /// The script source each phase's results were produced by, for staleness
     /// detection after the script is regenerated or edited.
     public var ranScriptByPhase: [String: String]?
+    /// Each phase is a separate workspace: its own script and params, like
+    /// promptsByPhase. `scriptSource`/`params` remain the legacy single slots.
+    public var scriptsByPhase: [String: String]?
+    public var paramsByPhase: [String: [String: String]]?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {
