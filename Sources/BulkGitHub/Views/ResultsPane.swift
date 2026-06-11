@@ -285,27 +285,27 @@ struct ConsolePane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker("", selection: $showAudit) {
-                    Text("Log").tag(false)
-                    Text("Audit").tag(true)
+            HStack(spacing: 10) {
+                // Quiet, Xcode-style pane tabs — this is pane furniture, not
+                // a control that deserves accent colour.
+                HStack(spacing: 2) {
+                    PaneTab(title: "Log", isOn: !showAudit) { showAudit = false }
+                    PaneTab(title: "Audit", isOn: showAudit) { showAudit = true }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 130)
                 if showAudit {
                     TextField("Filter by kind, repo, or text…", text: $filter)
                         .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
                         .font(.caption)
-                        .frame(maxWidth: 260)
+                        .frame(maxWidth: 220)
                     Text("\(filteredAudit.count) event(s)")
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 3)
             .overlay(alignment: .bottom) { Divider() }
 
             if showAudit {
@@ -370,6 +370,26 @@ struct ConsolePane: View {
                 if let last = filteredAudit.last { proxy.scrollTo(last.id, anchor: .bottom) }
             }
         }
+    }
+}
+
+/// A quiet text tab for switching pane content (Log / Audit).
+struct PaneTab: View {
+    let title: String
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(isOn ? .semibold : .regular))
+                .foregroundStyle(isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(isOn ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                            in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
     }
 }
 

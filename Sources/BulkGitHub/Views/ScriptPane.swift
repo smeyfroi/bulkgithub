@@ -13,14 +13,32 @@ struct ScriptPane: View {
                 WriteModeBanner()
             }
             // The prompt is the user's words — what they recognise the job
-            // by — so it gets visual primacy over the generated code.
-            HStack(alignment: .top, spacing: 8) {
-                TextField(promptPlaceholder,
-                          text: $model.prompt, axis: .vertical)
-                    .lineLimit(2...4)
-                    .font(.system(size: 15))
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.generate() }
+            // by — so it gets visual primacy over the generated code, and an
+            // unmistakable "this goes to the AI" treatment: sparkles and a
+            // soft gradient border, with room to breathe.
+            HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 15))
+                        .foregroundStyle(LinearGradient(colors: [.purple, .blue],
+                                                        startPoint: .top, endPoint: .bottom))
+                    TextField(promptPlaceholder,
+                              text: $model.prompt, axis: .vertical)
+                        .lineLimit(2...4)
+                        .font(.system(size: 15))
+                        .textFieldStyle(.plain)
+                        .focusEffectDisabled()
+                        .onSubmit { model.generate() }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(LinearGradient(colors: [.purple.opacity(0.55), .blue.opacity(0.45)],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing),
+                                      lineWidth: 1.5)
+                )
                 Button(model.generating ? "Generating…" : "Generate") {
                     model.generate()
                 }
