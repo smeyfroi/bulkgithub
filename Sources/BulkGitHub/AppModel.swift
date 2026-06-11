@@ -85,28 +85,55 @@ final class AppModel {
     func generate() {
         guard !generating, !prompt.isEmpty else { return }
         generating = true
-        statusLine = "Generating script…"
+        statusLine = "Requesting script… (model thinking)"
         let client = llmClient()
         let context = ScriptGenerationContext(organisation: settings.organisation)
         let promptText = prompt
+        let previousScript = scriptText
         Task {
+            // Stream the raw response, painting the in-progress script into
+            // the editor as it is written; parse the assembled text at the end.
+            var raw = ""
             do {
-                let script = try await client.makeScript(prompt: promptText, context: context)
-                scriptText = script
-                statusLine = "Script generated — review before running"
-                generating = false
-                await validate()
-            } catch LLMClientError.capabilityGap(let report) {
-                statusLine = "Capability gap — the model needs host APIs we don't offer (details in console)"
-                logs.append("◆ The model reports this request needs capabilities the host API does not provide:")
-                for line in report.split(separator: "\n", omittingEmptySubsequences: false) {
-                    logs.append("  " + String(line))
+                for try await event in client.streamScript(prompt: promptText, context: context) {
+                    guard case .delta(let chunk) = event else { continue }
+                    raw += chunk
+                    let live = PromptLibrary.liveScript(fromPartial: raw)
+                    if !live.isEmpty { scriptText = live }
+                    statusLine = "Writing script… \(raw.count) characters"
                 }
+                switch PromptLibrary.parseGeneration(from: raw) {
+                case .script(let script) where !script.isEmpty:
+                    scriptText = script
+                    statusLine = "Script generated — review before running"
+                    generating = false
+                    await validate()
+                case .script:
+                    scriptText = previousScript
+                    statusLine = "Generation produced no script"
+                    generating = false
+                case .capabilityGap(let report):
+                    scriptText = previousScript
+                    surfaceCapabilityGap(report)
+                    generating = false
+                }
+            } catch LLMClientError.capabilityGap(let report) {
+                scriptText = previousScript
+                surfaceCapabilityGap(report)
                 generating = false
             } catch {
+                scriptText = previousScript
                 statusLine = "Generation failed: \(error.localizedDescription)"
                 generating = false
             }
+        }
+    }
+
+    private func surfaceCapabilityGap(_ report: String) {
+        statusLine = "Capability gap — the model needs host APIs we don't offer (details in console)"
+        logs.append("◆ The model reports this request needs capabilities the host API does not provide:")
+        for line in report.split(separator: "\n", omittingEmptySubsequences: false) {
+            logs.append("  " + String(line))
         }
     }
 

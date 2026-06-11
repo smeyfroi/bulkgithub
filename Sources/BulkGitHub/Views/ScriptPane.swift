@@ -1,8 +1,10 @@
 import SwiftUI
+import CodeEditor
 import BulkGitHubKit
 
 struct ScriptPane: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         @Bindable var model = model
@@ -20,8 +22,10 @@ struct ScriptPane: View {
             }
             .padding([.top, .horizontal], 10)
 
-            TextEditor(text: $model.scriptText)
-                .font(.system(size: 12.5, design: .monospaced))
+            CodeEditor(source: $model.scriptText,
+                       language: .typescript,
+                       theme: colorScheme == .dark ? .atelierSavannaDark : .atelierSavannaLight,
+                       inset: CGSize(width: 8, height: 8))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 10)
 

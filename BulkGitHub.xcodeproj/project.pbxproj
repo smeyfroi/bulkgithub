@@ -12,6 +12,7 @@
 		3CDCE6BC65B57A351DB2211B /* BulkGitHubKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6F99D1AFFC6C3F1AB7F15772 /* BulkGitHubKit */; };
 		542EFD1FF2195A701105B835 /* ScriptPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296729E8EA1172009D28588 /* ScriptPane.swift */; };
 		649F9DE327A4082A3EAC1BC8 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE12C853F496916CB6381059 /* MainView.swift */; };
+		976BA8FF997478BDD1763FEB /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 594A31D0CE0E1672EE7EFDA0 /* CodeEditor */; };
 		C856746F11616974F4045F1A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C60DBDC4D8462B7A34B4DD5 /* AppModel.swift */; };
 		CAE073ED0FEEF7AC7BD02F3E /* BulkGitHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */; };
 		D52433840A47BB9003E0153A /* DetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8748F350BA2FBF938EAAD686 /* DetailPane.swift */; };
@@ -42,6 +43,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3CDCE6BC65B57A351DB2211B /* BulkGitHubKit in Frameworks */,
+				976BA8FF997478BDD1763FEB /* CodeEditor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +145,7 @@
 			name = BulkGitHubApp;
 			packageProductDependencies = (
 				6F99D1AFFC6C3F1AB7F15772 /* BulkGitHubKit */,
+				594A31D0CE0E1672EE7EFDA0 /* CodeEditor */,
 			);
 			productName = BulkGitHubApp;
 			productReference = 46FCB9DC9008DBAEA24B82FC /* BulkGitHubApp.app */;
@@ -172,6 +175,7 @@
 			mainGroup = 09A0F142985C53171AF682C1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				F7147994590EBA7681118369 /* XCRemoteSwiftPackageReference "CodeEditor" */,
 				6E199A4C793CE34FA33281A1 /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -412,7 +416,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		F7147994590EBA7681118369 /* XCRemoteSwiftPackageReference "CodeEditor" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ZeeZide/CodeEditor.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		594A31D0CE0E1672EE7EFDA0 /* CodeEditor */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F7147994590EBA7681118369 /* XCRemoteSwiftPackageReference "CodeEditor" */;
+			productName = CodeEditor;
+		};
 		6F99D1AFFC6C3F1AB7F15772 /* BulkGitHubKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BulkGitHubKit;

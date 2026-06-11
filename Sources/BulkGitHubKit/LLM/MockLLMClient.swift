@@ -23,6 +23,29 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         return script
     }
 
+    /// Fake-streams the patched recipe line by line so the offline demo
+    /// exercises the same live-generation UI path as the real client.
+    public func streamScript(prompt: String, context: ScriptGenerationContext)
+        -> AsyncThrowingStream<LLMStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let script = try await makeScript(prompt: prompt, context: context)
+                    continuation.yield(.delta("```typescript\n"))
+                    for line in script.split(separator: "\n", omittingEmptySubsequences: false) {
+                        try await Task.sleep(for: .milliseconds(12))
+                        continuation.yield(.delta(String(line) + "\n"))
+                    }
+                    continuation.yield(.delta("```"))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     public func reviseScript(_ script: String, prompt: String, diagnostics: [Diagnostic],
                              context: ScriptGenerationContext) async throws -> String {
         let summary = diagnostics.first.map { "\($0.line):\($0.column) \($0.message)" } ?? "no diagnostics"

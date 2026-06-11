@@ -10,6 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        .package(url: "https://github.com/ZeeZide/CodeEditor.git", from: "1.2.0"),
     ],
     targets: [
         .target(
@@ -20,7 +21,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "BulkGitHub",
-            dependencies: ["BulkGitHubKit"],
+            dependencies: [
+                "BulkGitHubKit",
+                .product(name: "CodeEditor", package: "CodeEditor"),
+            ],
             exclude: ["Assets.xcassets"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

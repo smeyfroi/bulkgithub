@@ -34,12 +34,44 @@ public enum LLMClientError: LocalizedError {
     }
 }
 
+public enum LLMStreamEvent: Sendable {
+    /// A chunk of the model's raw response text (fences included). The caller
+    /// accumulates chunks and parses the final result with
+    /// PromptLibrary.parseGeneration; PromptLibrary.liveScript gives a clean
+    /// in-progress view for display.
+    case delta(String)
+}
+
 /// Produces scripts, not plans. The host API surface and house rules are part
 /// of the prompt; the returned source is TypeScript targeting bulkgh.d.ts.
 public protocol LLMClient: Sendable {
     func makeScript(prompt: String, context: ScriptGenerationContext) async throws -> String
     func reviseScript(_ script: String, prompt: String, diagnostics: [Diagnostic],
                       context: ScriptGenerationContext) async throws -> String
+    /// Streaming generation: yields raw response chunks as the model writes.
+    /// Capability gaps and failures arrive as the stream's terminal error or
+    /// in the assembled text (parse with PromptLibrary.parseGeneration).
+    func streamScript(prompt: String, context: ScriptGenerationContext)
+        -> AsyncThrowingStream<LLMStreamEvent, Error>
+}
+
+public extension LLMClient {
+    /// Non-streaming fallback: one delta with the whole script.
+    func streamScript(prompt: String, context: ScriptGenerationContext)
+        -> AsyncThrowingStream<LLMStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let script = try await makeScript(prompt: prompt, context: context)
+                    continuation.yield(.delta(script))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 // MARK: - Prompt library
@@ -118,6 +150,21 @@ public enum PromptLibrary {
             return .capabilityGap(String(response[range]).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return .script(extractCode(from: response))
+    }
+
+    /// Clean in-progress view of a partially streamed response: drops any
+    /// prose/fence prefix, shows the code as it arrives, and trims a closing
+    /// fence once it lands. Good enough for live display; the final parse is
+    /// parseGeneration on the complete text.
+    public static func liveScript(fromPartial raw: String) -> String {
+        guard let fenceStart = raw.range(of: "```") else { return raw }
+        let afterTicks = raw[fenceStart.upperBound...]
+        guard let newline = afterTicks.firstIndex(of: "\n") else { return "" }
+        var code = String(afterTicks[afterTicks.index(after: newline)...])
+        if let closing = code.range(of: "\n```") {
+            code = String(code[..<closing.lowerBound])
+        }
+        return code
     }
 
     /// Pulls the script out of a fenced code block; falls back to the whole

@@ -29,12 +29,84 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
     }
 
     public func makeScript(prompt: String, context: ScriptGenerationContext) async throws -> String {
-        let user = """
+        try await complete(userContent: Self.userMessage(for: prompt, context: context),
+                           context: context)
+    }
+
+    private static func userMessage(for prompt: String, context: ScriptGenerationContext) -> String {
+        """
         Write a \(context.phase.rawValue) script for this request:
 
         \(prompt)
         """
-        return try await complete(userContent: user, context: context)
+    }
+
+    /// SSE streaming via the Messages API (stream: true). Yields raw text
+    /// deltas; the caller accumulates and parses the final response.
+    public func streamScript(prompt: String, context: ScriptGenerationContext)
+        -> AsyncThrowingStream<LLMStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let body = try self.requestBody(
+                        userContent: Self.userMessage(for: prompt, context: context),
+                        context: context,
+                        stream: true)
+                    let request = try self.urlRequest(body: body)
+                    let (bytes, response) = try await self.session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw LLMClientError.invalidResponse("non-HTTP response")
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        var errorBody = ""
+                        for try await line in bytes.lines {
+                            errorBody += line
+                            if errorBody.count > 4000 { break }
+                        }
+                        if http.statusCode == 429 {
+                            throw LLMClientError.rateLimited(retryAfter: nil)
+                        }
+                        throw LLMClientError.http(http.statusCode,
+                                                  Self.errorMessage(from: Data(errorBody.utf8)) ?? errorBody)
+                    }
+                    for try await line in bytes.lines {
+                        if let delta = Self.textDelta(fromSSELine: line) {
+                            continuation.yield(.delta(delta))
+                        } else if let failure = Self.streamFailure(fromSSELine: line) {
+                            throw LLMClientError.invalidResponse(failure)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Extracts the text chunk from one SSE line, or nil for any other event
+    /// (thinking deltas, block boundaries, pings, "event:" lines).
+    static func textDelta(fromSSELine line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (object["type"] as? String) == "content_block_delta",
+              let delta = object["delta"] as? [String: Any],
+              (delta["type"] as? String) == "text_delta" else { return nil }
+        return delta["text"] as? String
+    }
+
+    /// Detects a mid-stream error event.
+    static func streamFailure(fromSSELine line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (object["type"] as? String) == "error" else { return nil }
+        let error = object["error"] as? [String: Any]
+        return (error?["message"] as? String) ?? "stream error"
     }
 
     public func reviseScript(_ script: String, prompt: String, diagnostics: [Diagnostic],
@@ -60,17 +132,15 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
         return try await complete(userContent: user, context: context)
     }
 
-    private func complete(userContent: String, context: ScriptGenerationContext) async throws -> String {
-        guard let key = keyProvider(), !key.isEmpty else {
-            throw LLMClientError.missingAPIKey
-        }
+    /// Shared body for blocking and streaming requests. The system prompt
+    /// (house rules + API declaration) is a stable prefix shared across every
+    /// generation — marked cacheable.
+    private func requestBody(userContent: String, context: ScriptGenerationContext,
+                             stream: Bool) throws -> [String: Any] {
         guard let apiDeclaration = ResourceLocator.apiDeclaration else {
             throw LLMClientError.invalidResponse("bulkgh.d.ts missing from bundle")
         }
-
-        // The system prompt (house rules + API declaration) is a stable prefix
-        // shared across every generation — mark it cacheable.
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
             "thinking": ["type": "adaptive"],
@@ -82,7 +152,14 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
             ]],
             "messages": [["role": "user", "content": userContent]],
         ]
+        if stream { body["stream"] = true }
+        return body
+    }
 
+    private func urlRequest(body: [String: Any]) throws -> URLRequest {
+        guard let key = keyProvider(), !key.isEmpty else {
+            throw LLMClientError.missingAPIKey
+        }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 300
@@ -90,6 +167,12 @@ public final class AnthropicClient: LLMClient, @unchecked Sendable {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    private func complete(userContent: String, context: ScriptGenerationContext) async throws -> String {
+        let request = try urlRequest(body: requestBody(userContent: userContent,
+                                                       context: context, stream: false))
 
         let data: Data
         let response: URLResponse
