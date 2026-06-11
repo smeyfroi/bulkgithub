@@ -208,17 +208,24 @@ struct SidebarView: View {
     @State private var expandedGroups: Set<JobPhase> = Set(JobPhase.allCases)
 
     var body: some View {
+        // Phase switching is locked while a run or generation is in flight —
+        // swapping workspaces mid-action invites confusion (the run keeps
+        // writing into the phase it started in).
+        let busy = model.running || model.generating
         List(selection: phaseSelection) {
             Section("Job phases") {
                 Label("Check", systemImage: "magnifyingglass")
                     .tag(JobPhase.check)
                     .help("Prompts generate read-only search scripts")
+                    .selectionDisabled(busy)
                 Label("Update", systemImage: "pencil")
                     .tag(JobPhase.update)
                     .help("Generate update scripts — dry run by default; arm writes via Apply")
+                    .selectionDisabled(busy)
                 Label("Merge", systemImage: "arrow.triangle.merge")
                     .tag(JobPhase.merge)
                     .help("Approve job PRs, then merge scripts act on this job's artifacts only")
+                    .selectionDisabled(busy)
             }
 
             // The recipe LIBRARY is reference material, not navigation: it
@@ -237,6 +244,7 @@ struct SidebarView: View {
                                         .font(.callout)
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(busy)
                                 .selectionDisabled()
                                 .help(recipe.prompt)
                             }

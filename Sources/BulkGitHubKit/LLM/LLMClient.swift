@@ -88,7 +88,10 @@ public enum PromptLibrary {
     level — never call gh/job/parse outside main().
     3. GitHub search results are candidates, NEVER proof. Always fetch content \
     with gh.getContent and verify deterministically before job.reportMatch. \
-    The host enforces this and will throw otherwise.
+    The host enforces this and will throw otherwise. Evidence excerpts are \
+    the specific matching line or lines — a handful at most, never large \
+    blocks and never the whole file (the app shows surrounding context \
+    itself, and highlights the excerpt lines within it).
     4. Wrap per-repository work in try/catch; report failures with \
     job.error(repo, message) and continue. One bad repo must not kill the run.
     5. Give every skipped repo a clear, specific reason via job.skip.
@@ -118,7 +121,10 @@ public enum PromptLibrary {
     14. Update scripts follow this shape per repo: gh.getRef on the default \
     branch, one gh.createBranch (the name MUST start with "bulkgh/" — \
     host-enforced), gh.putContent per changed file (always gh.getContent \
-    first so the plan can show a diff), then a single gh.createPR.
+    first so the plan can show a diff), then a single gh.createPR. Do NOT \
+    call job.reportMatch from update scripts — the recorded plan and its \
+    diffs are the narrative; use job.log/job.progress for commentary and \
+    job.skip/job.error for outcomes.
     15. Compute new file contents with targeted line/string surgery that \
     preserves the rest of the file byte-for-byte; never parse-and-reserialise \
     whole files, which destroys formatting.

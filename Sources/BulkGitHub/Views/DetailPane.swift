@@ -338,11 +338,21 @@ struct EvidenceView: View {
     }
 
     private func contextLines(_ context: String) -> [ContextLine] {
-        let matchLines = Set(evidence.excerpt
+        let excerptLines = evidence.excerpt
             .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        var matchLines = Set(excerptLines)
+        let lines = context.components(separatedBy: "\n")
+        // A huge excerpt (a whole file, say) carries no information about
+        // WHICH lines matter — highlighting nearly everything reads as a
+        // broken diff. Degrade to plain context instead.
+        let nonEmpty = lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let wouldHighlight = nonEmpty.filter { matchLines.contains($0) }.count
+        if excerptLines.count > 8 || wouldHighlight * 2 > nonEmpty.count {
+            matchLines = []
+        }
         let start = evidence.contextStartLine ?? 1
-        return context.components(separatedBy: "\n").enumerated().map { offset, text in
+        return lines.enumerated().map { offset, text in
             let trimmed = text.trimmingCharacters(in: .whitespaces)
             return ContextLine(number: start + offset,
                                text: text,

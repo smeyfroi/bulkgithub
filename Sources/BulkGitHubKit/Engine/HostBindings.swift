@@ -836,7 +836,9 @@ enum HostBindings {
         guard let index = lines.firstIndex(where: {
             $0.trimmingCharacters(in: .whitespaces).contains(needle)
         }) else { return nil }
-        let excerptLineCount = excerpt.components(separatedBy: "\n").count
+        // Cap the excerpt's contribution: a script that passes a whole file
+        // as the excerpt must not turn the context into the whole file.
+        let excerptLineCount = min(excerpt.components(separatedBy: "\n").count, 8)
         let start = max(0, index - radius)
         let end = min(lines.count, index + excerptLineCount + radius)
         return (lines[start..<end].joined(separator: "\n"), start + 1)

@@ -344,7 +344,7 @@ final class AppModel {
     }
 
     func setPhase(_ newPhase: JobPhase) {
-        guard newPhase != phase else { return }
+        guard newPhase != phase, !running, !generating else { return }
         // Each phase is a separate workspace: prompt, script, and params swap
         // together. An update workspace starts empty rather than inheriting
         // the check script.
@@ -375,7 +375,7 @@ final class AppModel {
     }
 
     func loadRecipe(_ recipe: Recipe) {
-        guard let source = recipe.source else { return }
+        guard let source = recipe.source, !running, !generating else { return }
         if recipe.phase != phase {
             stashWorkspace()
             phase = recipe.phase
