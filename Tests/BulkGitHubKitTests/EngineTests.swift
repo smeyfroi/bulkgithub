@@ -63,6 +63,28 @@ struct EngineTests {
         #expect(evidence?.contextStartLine == 1)
     }
 
+    @Test("getRepo resolves authoritative metadata without creating a result row")
+    func getRepoLookup() async {
+        let outcome = await run("""
+        async function main() {
+          const repo = await gh.getRepo("geome/data-pipeline");
+          job.log("branch=" + repo.defaultBranch);
+          try {
+            await gh.getRepo("geome/no-such-repo");
+          } catch (e) {
+            job.log("threw: " + String(e));
+          }
+        }
+        """)
+        #expect(outcome.status == .completed)
+        // The fixture's data-pipeline defaults to master — the case that
+        // breaks scripts which hardcode heads/main.
+        #expect(outcome.logs.contains("branch=master"))
+        #expect(outcome.logs.contains { $0.hasPrefix("threw:") && $0.contains("no-such-repo") })
+        #expect(outcome.results.isEmpty)
+        #expect(outcome.auditEvents.contains { $0.kind == "gh.getRepo" })
+    }
+
     @Test("contextSnippet centres on the excerpt and reports its start line")
     func contextSnippetHelper() {
         let content = (1...10).map { "line\($0)" }.joined(separator: "\n")

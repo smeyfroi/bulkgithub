@@ -140,6 +140,14 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         return items.compactMap(Self.repoRef(from:))
     }
 
+    public func getRepo(fullName: String) async throws -> RepoRef {
+        let json = try await fetchJSON(try request(path: "repos/\(fullName)"))
+        guard let dict = json as? [String: Any], let repo = Self.repoRef(from: dict) else {
+            throw GitHubClientError.invalidResponse("repos API returned unexpected shape for \(fullName)")
+        }
+        return repo
+    }
+
     public func searchCode(org: String, query: String) async throws -> [RepoRef] {
         let q = query.contains("org:") ? query : "org:\(org) \(query)"
         let items = try await fetchPaginatedArray(path: "search/code",

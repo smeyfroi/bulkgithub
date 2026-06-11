@@ -67,7 +67,7 @@ struct ScriptPane: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
-                Text("\(model.results.count) repos")
+                Text("\(model.visibleRowCount) repos")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             }

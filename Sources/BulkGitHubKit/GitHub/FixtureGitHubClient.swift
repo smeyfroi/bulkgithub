@@ -54,6 +54,15 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         return searchResults
     }
 
+    public func getRepo(fullName: String) async throws -> RepoRef {
+        record("getRepo(\(fullName))")
+        try await pause()
+        guard let repo = repos.first(where: { $0.fullName == fullName }) else {
+            throw GitHubClientError.notFound("repository \(fullName)")
+        }
+        return repo
+    }
+
     public func getContent(repo: String, path: String, ref: String?) async throws -> String? {
         record("getContent(\(repo), \(path))")
         try await pause()

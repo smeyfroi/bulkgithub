@@ -86,6 +86,21 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(listOrgRepos, to: AnyObject.self),
                      forKeyedSubscript: "listOrgRepos" as NSString)
 
+        let getRepo: @convention(block) (JSValue?) -> JSValue = { repoValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("getRepo: repo (object or \"owner/name\") is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let repo = try await github.getRepo(fullName: fullName)
+                collector.remember(repo)
+                collector.audit(kind: "gh.getRepo", repo: fullName,
+                                detail: "default branch \(repo.defaultBranch)")
+                return repo.scriptValue
+            }
+        }
+        gh.setObject(unsafeBitCast(getRepo, to: AnyObject.self),
+                     forKeyedSubscript: "getRepo" as NSString)
+
         let searchCode: @convention(block) (JSValue?) -> JSValue = { queryValue in
             guard let query = stringArg(queryValue) else {
                 return rejectedPromise("searchCode: query string is required")

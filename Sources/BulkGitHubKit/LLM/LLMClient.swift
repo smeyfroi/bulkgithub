@@ -122,6 +122,11 @@ public enum PromptLibrary {
     15. Compute new file contents with targeted line/string surgery that \
     preserves the rest of the file byte-for-byte; never parse-and-reserialise \
     whole files, which destroys formatting.
+    16. NEVER hardcode a branch name — the organisation mixes "master" and \
+    "main" defaults. Use repo.defaultBranch from gh.listOrgRepos, or resolve \
+    it with gh.getRepo when you only have a name (searchCode results and \
+    repo names carried in job state do not have a reliable defaultBranch). \
+    Build refs as "heads/" + defaultBranch.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {

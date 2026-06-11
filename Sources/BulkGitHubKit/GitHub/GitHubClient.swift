@@ -25,6 +25,10 @@ public enum GitHubClientError: Error, LocalizedError, Equatable {
 /// the update/merge phases (plan v2, phases 3-5) and will extend this protocol.
 public protocol GitHubClient: Sendable {
     func listOrgRepos(org: String) async throws -> [RepoRef]
+    /// One repository's metadata — the authoritative source for defaultBranch.
+    /// (Code-search results don't carry default_branch, so repos surfaced via
+    /// searchCode may claim "main" on a master-default repo.)
+    func getRepo(fullName: String) async throws -> RepoRef
     /// Code search scoped to the organisation. Results are candidate evidence only.
     func searchCode(org: String, query: String) async throws -> [RepoRef]
     /// Returns nil when the file does not exist at that path/ref.

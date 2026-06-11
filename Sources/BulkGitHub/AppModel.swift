@@ -115,7 +115,13 @@ final class AppModel {
 
     var selectedResult: RepoResult? {
         guard let selectedRepo else { return nil }
-        return results.first { $0.id == selectedRepo }
+        if let result = results.first(where: { $0.id == selectedRepo }) { return result }
+        // The update table carries check rows forward before any update run —
+        // selecting one inspects its check evidence.
+        if phase == .update {
+            return resultsByPhase[.check]?.first { $0.id == selectedRepo }
+        }
+        return nil
     }
 
     /// The visible results were produced by a different script than the one
@@ -125,10 +131,37 @@ final class AppModel {
         return ran != scriptText
     }
 
-    /// The check-phase verdict for a repo — shown alongside update results so
-    /// the funnel (found by Check → planned by Update) stays visible.
-    func checkStatus(for repoID: String) -> RepoStatus? {
-        resultsByPhase[.check]?.first { $0.id == repoID }?.status
+    /// One row of the update table: the check verdict and the update outcome
+    /// side by side, so the funnel (found by Check → planned by Update) is
+    /// visible from the moment you switch phases — including the canary repo,
+    /// before any update run has happened.
+    struct UpdateRow: Identifiable {
+        let repo: RepoRef
+        let check: RepoResult?
+        let update: RepoResult?
+        var id: String { repo.fullName }
+    }
+
+    var updateRows: [UpdateRow] {
+        let checks = resultsByPhase[.check] ?? []
+        let updates = resultsByPhase[.update] ?? []
+        var updatesByID = Dictionary(uniqueKeysWithValues: updates.map { ($0.id, $0) })
+        var rows: [UpdateRow] = checks.map { check in
+            let update = updatesByID.removeValue(forKey: check.id)
+            return UpdateRow(repo: update?.repo ?? check.repo, check: check, update: update)
+        }
+        // Repos only the update run touched (e.g. a full scan with no carried
+        // check results), in run order.
+        for result in updates where updatesByID[result.id] != nil {
+            rows.append(UpdateRow(repo: result.repo, check: nil, update: result))
+        }
+        return rows
+    }
+
+    /// Row count for the status footer — the update table includes carried
+    /// check rows, not just update results.
+    var visibleRowCount: Int {
+        phase == .update ? updateRows.count : results.count
     }
 
     func clearResults() {
@@ -142,6 +175,7 @@ final class AppModel {
     func useAsCanary(_ repoID: String) {
         canaryRepo = repoID
         setPhase(.update)
+        selectedRepo = repoID
         statusLine = "Canary set — update runs are confined to \(repoID)"
     }
 

@@ -56,6 +56,22 @@ public final class JobCollector: @unchecked Sendable {
         events.forEach(onEvent)
     }
 
+    /// Record authoritative repo metadata without creating a result row —
+    /// gh.getRepo is a lookup, not an enumeration. An existing row is
+    /// refreshed so the table shows the real default branch.
+    public func remember(_ repo: RepoRef) {
+        var event: RunEvent?
+        lock.lock()
+        knownRepos[repo.fullName] = repo
+        if var result = resultsByRepo[repo.fullName], result.repo != repo {
+            result.repo = repo
+            resultsByRepo[repo.fullName] = result
+            event = .repo(result)
+        }
+        lock.unlock()
+        if let event { onEvent(event) }
+    }
+
     /// Run completed: every repo the script enumerated but never reported on
     /// is resolved to "no match". Mid-run, `candidate` means "being examined";
     /// leaving it on the final table reads as if every org repo matched.

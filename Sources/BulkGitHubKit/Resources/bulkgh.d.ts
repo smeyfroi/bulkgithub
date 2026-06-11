@@ -45,10 +45,21 @@ interface GitHub {
   listOrgRepos(): Promise<Repo[]>;
 
   /**
+   * One repository's metadata — the AUTHORITATIVE source for defaultBranch.
+   * The organisation mixes "master" and "main" default branches, so never
+   * hardcode a branch name. Repos from listOrgRepos carry the real default
+   * branch; repos from searchCode (and bare names carried in job state) may
+   * not — resolve them with getRepo before branching. Rejects when the
+   * repository does not exist.
+   */
+  getRepo(repo: Repo | string): Promise<Repo>;
+
+  /**
    * GitHub code search, automatically scoped to the configured organisation.
    * Results are CANDIDATE EVIDENCE ONLY — always fetch and verify content
    * before reporting a match. Search indexes are stale and snippet matches
-   * are not proof.
+   * are not proof. The defaultBranch on search results is NOT reliable —
+   * use gh.getRepo when you need it.
    */
   searchCode(query: string): Promise<Repo[]>;
 
@@ -69,7 +80,12 @@ interface GitHub {
    */
   listFiles(repo: Repo | string, glob?: string, ref?: string): Promise<string[]>;
 
-  /** Resolve a ref (e.g. "heads/main") to its SHA, or null if absent. */
+  /**
+   * Resolve a ref to its SHA, or null if absent. Build the ref from the
+   * repo's real default branch ("heads/" + repo.defaultBranch) — default
+   * branches vary across the organisation, so "heads/main" hardcoded will
+   * miss master-default repositories.
+   */
   getRef(repo: Repo | string, ref: string): Promise<{ sha: string } | null>;
 
   /** Pull requests on a repository. */

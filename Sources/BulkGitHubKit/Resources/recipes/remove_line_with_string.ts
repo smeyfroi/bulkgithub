@@ -45,7 +45,16 @@ async function planRepo(repoName: string, defaultBranch: string, paths: string[]
     return;
   }
 
-  const ref = await gh.getRef(repoName, `heads/${defaultBranch}`);
+  let ref = await gh.getRef(repoName, `heads/${defaultBranch}`);
+  if (ref === null) {
+    // Carried state can hold a wrong branch (defaults are a mix of master and
+    // main across the org) — resolve the authoritative one and retry once.
+    const repo = await gh.getRepo(repoName);
+    if (repo.defaultBranch !== defaultBranch) {
+      defaultBranch = repo.defaultBranch;
+      ref = await gh.getRef(repoName, `heads/${defaultBranch}`);
+    }
+  }
   if (ref === null) {
     job.error(repoName, `default branch ${defaultBranch} has no ref`);
     return;

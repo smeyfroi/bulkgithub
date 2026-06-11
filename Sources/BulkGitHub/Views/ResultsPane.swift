@@ -49,10 +49,10 @@ struct ResultsPane: View {
 
     private var updateTable: some View {
         @Bindable var model = model
-        return Table(model.results, selection: $model.selectedRepo) {
-            TableColumn("Check") { (result: RepoResult) in
-                if let status = model.checkStatus(for: result.id) {
-                    StatusBadge(status: status)
+        return Table(model.updateRows, selection: $model.selectedRepo) {
+            TableColumn("Check") { (row: AppModel.UpdateRow) in
+                if let check = row.check {
+                    StatusBadge(status: check.status)
                         .opacity(0.6)
                         .help("Verdict from the last check run")
                 } else {
@@ -62,23 +62,31 @@ struct ResultsPane: View {
             }
             .width(min: 90, ideal: 110)
 
-            TableColumn("Update") { (result: RepoResult) in
-                StatusBadge(status: result.status)
+            TableColumn("Update") { (row: AppModel.UpdateRow) in
+                if let update = row.update {
+                    StatusBadge(status: update.status)
+                } else {
+                    Text("—")
+                        .foregroundStyle(.tertiary)
+                        .help("No update run yet for this repo")
+                }
             }
             .width(min: 90, ideal: 110)
 
-            TableColumn("Repository") { (result: RepoResult) in
-                RepoCell(repo: result.repo)
+            TableColumn("Repository") { (row: AppModel.UpdateRow) in
+                RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)
             }
 
-            TableColumn("Branch") { (result: RepoResult) in
-                Text(result.repo.defaultBranch)
+            TableColumn("Branch") { (row: AppModel.UpdateRow) in
+                Text(row.repo.defaultBranch)
                     .foregroundStyle(.secondary)
             }
             .width(min: 50, ideal: 70)
 
-            TableColumn("Detail") { (result: RepoResult) in
-                DetailCell(result: result)
+            TableColumn("Detail") { (row: AppModel.UpdateRow) in
+                if let result = row.update ?? row.check {
+                    DetailCell(result: result)
+                }
             }
         }
         .contextMenu(forSelectionType: String.self) { ids in
@@ -98,9 +106,15 @@ struct ResultsPane: View {
 
 struct RepoCell: View {
     let repo: RepoRef
+    var isCanary = false
 
     var body: some View {
         HStack(spacing: 4) {
+            if isCanary {
+                Image(systemName: "scope")
+                    .foregroundStyle(.purple)
+                    .help("Canary target — update runs touch only this repo")
+            }
             Text(repo.fullName)
             if repo.archived {
                 Image(systemName: "archivebox")
