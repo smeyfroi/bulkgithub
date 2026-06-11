@@ -14,6 +14,10 @@ async function main(): Promise<void> {
   const repos = await gh.listOrgRepos();
   job.progress(`scanning ${repos.length} repos for ${glob} files containing the string`);
 
+  // Recorded for the update phase via job state — the update script reuses
+  // these matches instead of re-searching the organisation.
+  const matches: { repo: string; defaultBranch: string; paths: string[] }[] = [];
+
   for (const repo of repos) {
     if (repo.archived) {
       job.skip(repo, "archived");
@@ -25,11 +29,10 @@ async function main(): Promise<void> {
         job.skip(repo, `no files matching ${glob}`);
         continue;
       }
-      let matched = false;
+      const hits: string[] = [];
       for (const path of files) {
         const text = await gh.getContent(repo, path);
-        if (text === null) continue;
-        if (!text.includes(needle)) continue;
+        if (text === null || !text.includes(needle)) continue;
         const lines = text.split("\n");
         const index = lines.findIndex(line => line.includes(needle));
         const excerpt = lines.slice(Math.max(0, index - 2), index + 3).join("\n");
@@ -38,15 +41,18 @@ async function main(): Promise<void> {
           excerpt,
           explanation: lines[index].trim(),
         });
-        matched = true;
+        hits.push(path);
       }
-      if (!matched) {
+      if (hits.length === 0) {
         job.skip(repo, `string not found in ${files.length} file(s) matching ${glob}`);
+      } else {
+        matches.push({ repo: repo.fullName, defaultBranch: repo.defaultBranch, paths: hits });
       }
     } catch (e) {
       job.error(repo, String(e));
     }
   }
 
-  job.progress("scan complete");
+  job.writeState("stringMatches", matches);
+  job.progress(`scan complete — ${matches.length} repo(s) recorded for the update phase`);
 }

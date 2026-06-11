@@ -26,13 +26,15 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         guard var script = ResourceLocator.recipe(named: "remove_line_with_string") else {
             throw LLMClientError.invalidResponse("recipe resource missing from bundle")
         }
-        if let needle = firstMatch(in: prompt, pattern: #"`([^`]+)`"#)
-            ?? firstMatch(in: prompt, pattern: #""([^"]+)""#) {
+        if let needle = firstMatch(in: prompt, pattern: #"`([^`]+)`"#) {
             script = Self.replaceParam(in: script, name: "needle", value: needle)
         }
         if let directory = firstMatch(in: prompt, pattern: #"files?\s+(?:in|under)\s+([\w./-]+)"#) {
             let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
             script = Self.replaceParam(in: script, name: "glob", value: "\(trimmed)/**")
+        }
+        if let title = firstMatch(in: prompt, pattern: #"pull request title:\s*"([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "prTitle", value: title)
         }
         return script
     }

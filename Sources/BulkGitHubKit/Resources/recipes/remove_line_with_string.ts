@@ -30,49 +30,78 @@ function removeLinesContaining(text: string, needle: string, isJson: boolean): s
   return kept.join("\n");
 }
 
+/** Re-fetches each file (contents must be current), plans branch/edits/PR. */
+async function planRepo(repoName: string, defaultBranch: string, paths: string[]): Promise<void> {
+  const { needle, branch, message, prTitle, prBody } = job.params;
+
+  const edits: { path: string; updated: string }[] = [];
+  for (const path of paths) {
+    const text = await gh.getContent(repoName, path);
+    if (text === null || !text.includes(needle)) continue;
+    edits.push({ path, updated: removeLinesContaining(text, needle, path.endsWith(".json")) });
+  }
+  if (edits.length === 0) {
+    job.skip(repoName, "string no longer present");
+    return;
+  }
+
+  const ref = await gh.getRef(repoName, `heads/${defaultBranch}`);
+  if (ref === null) {
+    job.error(repoName, `default branch ${defaultBranch} has no ref`);
+    return;
+  }
+  await gh.createBranch(repoName, branch, ref.sha);
+  for (const edit of edits) {
+    await gh.putContent(repoName, edit.path, edit.updated, { branch, message });
+  }
+  await gh.createPR(repoName, { head: branch, title: prTitle, body: prBody });
+  job.log(`${repoName}: ${edits.length} file(s) planned`);
+}
+
 async function main(): Promise<void> {
-  const { glob, needle, branch, message, prTitle, prBody } = job.params;
+  const { glob, needle } = job.params;
 
-  const repos = await gh.listOrgRepos();
-  job.progress(`scanning ${repos.length} repos for ${glob} files containing the string`);
+  // Prefer the check phase's recorded matches: no repeat of the org-wide
+  // search; only the matched files are re-fetched for fresh diffs.
+  const prior = job.readState("stringMatches") as
+    { repo: string; defaultBranch: string; paths: string[] }[] | null;
 
-  for (const repo of repos) {
-    if (repo.archived) {
-      job.skip(repo, "archived");
-      continue;
+  if (prior !== null && prior.length > 0) {
+    job.progress(`planning updates for ${prior.length} repo(s) carried over from the check run`);
+    for (const match of prior) {
+      try {
+        await planRepo(match.repo, match.defaultBranch, match.paths);
+      } catch (e) {
+        job.error(match.repo, String(e));
+      }
     }
-    try {
-      const files = await gh.listFiles(repo, glob);
-      if (files.length === 0) {
-        job.skip(repo, `no files matching ${glob}`);
+  } else {
+    const repos = await gh.listOrgRepos();
+    job.progress(`no check results to carry over — scanning ${repos.length} repos for ${glob}`);
+    for (const repo of repos) {
+      if (repo.archived) {
+        job.skip(repo, "archived");
         continue;
       }
-
-      const edits: { path: string; updated: string }[] = [];
-      for (const path of files) {
-        const text = await gh.getContent(repo, path);
-        if (text === null || !text.includes(needle)) continue;
-        const updated = removeLinesContaining(text, needle, path.endsWith(".json"));
-        edits.push({ path, updated });
+      try {
+        const files = await gh.listFiles(repo, glob);
+        if (files.length === 0) {
+          job.skip(repo, `no files matching ${glob}`);
+          continue;
+        }
+        const hits: string[] = [];
+        for (const path of files) {
+          const text = await gh.getContent(repo, path);
+          if (text !== null && text.includes(needle)) hits.push(path);
+        }
+        if (hits.length === 0) {
+          job.skip(repo, `string not found in ${files.length} file(s) matching ${glob}`);
+          continue;
+        }
+        await planRepo(repo.fullName, repo.defaultBranch, hits);
+      } catch (e) {
+        job.error(repo, String(e));
       }
-      if (edits.length === 0) {
-        job.skip(repo, `string not found in ${files.length} file(s) matching ${glob}`);
-        continue;
-      }
-
-      const ref = await gh.getRef(repo, `heads/${repo.defaultBranch}`);
-      if (ref === null) {
-        job.error(repo, `default branch ${repo.defaultBranch} has no ref`);
-        continue;
-      }
-      await gh.createBranch(repo, branch, ref.sha);
-      for (const edit of edits) {
-        await gh.putContent(repo, edit.path, edit.updated, { branch, message });
-      }
-      await gh.createPR(repo, { head: branch, title: prTitle, body: prBody });
-      job.log(`${repo.fullName}: ${edits.length} file(s) planned`);
-    } catch (e) {
-      job.error(repo, String(e));
     }
   }
 

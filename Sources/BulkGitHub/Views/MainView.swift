@@ -5,54 +5,60 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210)
-        } content: {
-            VSplitView {
-                ScriptPane()
-                    .frame(minHeight: 240)
-                ResultsPane()
-                    .frame(minHeight: 160)
-                ConsolePane()
-                    .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
-            }
-            .navigationSplitViewColumnWidth(min: 480, ideal: 620)
-        } detail: {
-            DetailPane()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
-        }
-        .navigationTitle("BulkGitHub")
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            EnvironmentFooter()
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await model.validate() }
-                } label: {
-                    Label("Check", systemImage: "checkmark.shield")
+        // Plain VStack rather than a safeAreaInset overlay: the footer takes
+        // its own space, so scrolling content (console, results) can never
+        // hide its last line underneath it.
+        VStack(spacing: 0) {
+            NavigationSplitView {
+                SidebarView()
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+            } content: {
+                VSplitView {
+                    ScriptPane()
+                        .frame(minHeight: 240)
+                    ResultsPane()
+                        .frame(minHeight: 160)
+                    ConsolePane()
+                        .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
                 }
-                .help("Lint and type-check the script against the host API")
-                .disabled(model.running || model.validating)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 620)
+            } detail: {
+                DetailPane()
+                    .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+            }
+            .navigationTitle("BulkGitHub")
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        Task { await model.validate() }
+                    } label: {
+                        Label("Check", systemImage: "checkmark.shield")
+                    }
+                    .help("Lint and type-check the script against the host API")
+                    .disabled(model.running || model.validating)
 
-                if model.running {
-                    Button {
-                        model.cancel()
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
+                    if model.running {
+                        Button {
+                            model.cancel()
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                                .foregroundStyle(.red)
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .help("Cancel the run — pending operations are abandoned")
+                    } else {
+                        Button {
+                            model.run()
+                        } label: {
+                            Label("Run", systemImage: "play.fill")
+                        }
+                        .help("Validate and run the script (check phase is read-only; update phase records a dry-run plan)")
+                        .disabled(model.scriptText.isEmpty || model.validating)
                     }
-                    .help("Cancel the run")
-                } else {
-                    Button {
-                        model.run()
-                    } label: {
-                        Label("Run", systemImage: "play.fill")
-                    }
-                    .help("Validate and run the script (check phase is read-only)")
-                    .disabled(model.scriptText.isEmpty || model.validating)
                 }
             }
+
+            EnvironmentFooter()
         }
     }
 }
@@ -76,26 +82,15 @@ struct SidebarView: View {
             }
 
             Section("Recipes") {
-                Button {
-                    model.loadRecipe(named: "find_yaml_key_value")
-                } label: {
-                    Label("Find YAML key/value", systemImage: "doc.text.magnifyingglass")
+                ForEach(RecipeCatalog.all) { recipe in
+                    Button {
+                        model.loadRecipe(recipe)
+                    } label: {
+                        Label(recipe.title, systemImage: recipe.systemImage)
+                    }
+                    .buttonStyle(.plain)
+                    .help(recipe.prompt)
                 }
-                .buttonStyle(.plain)
-
-                Button {
-                    model.loadRecipe(named: "find_string_in_path")
-                } label: {
-                    Label("Find string under path", systemImage: "text.magnifyingglass")
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    model.loadRecipe(named: "remove_line_with_string")
-                } label: {
-                    Label("Delete lines with string", systemImage: "pencil.slash")
-                }
-                .buttonStyle(.plain)
             }
         }
         .listStyle(.sidebar)
@@ -125,6 +120,10 @@ struct EnvironmentFooter: View {
                   systemImage: model.settings.useMockLLM ? "cpu" : "sparkles")
             Label(model.typeCheckerLabel,
                   systemImage: model.typeCheckingAvailable ? "checkmark.seal" : "xmark.seal")
+            if let quota = model.quotaText {
+                Label(quota, systemImage: "gauge.with.needle")
+                    .help("GitHub API quota remaining")
+            }
             Spacer()
             SettingsLink {
                 Image(systemName: "gearshape")

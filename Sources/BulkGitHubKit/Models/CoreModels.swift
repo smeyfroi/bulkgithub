@@ -135,6 +135,12 @@ public struct Job: Codable, Identifiable, Sendable {
     public var lastRunStatus: String?
     /// Optional so pre-phase-3 saved state still decodes.
     public var plannedActions: [String: [PlannedAction]]?
+    /// Cross-phase job state (writeState/readState), JSON-encoded per key.
+    public var state: [String: String]?
+    /// Prompt per phase — switching phases must not carry prompts across.
+    public var promptsByPhase: [String: String]?
+    public var prTitle: String?
+    public var canaryRepo: String?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {
@@ -240,6 +246,10 @@ public struct RunOutcome: Sendable {
     public let auditEvents: [AuditEvent]
     /// Recorded write actions per repo fullName (update-phase dry runs).
     public let plannedActions: [String: [PlannedAction]]
+    /// job.writeState values, JSON-encoded per key — feed into the next
+    /// phase's run as initialState so update scripts can reuse check results
+    /// instead of re-searching.
+    public let state: [String: String]
     public let duration: TimeInterval
 }
 

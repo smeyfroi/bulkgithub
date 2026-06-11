@@ -15,10 +15,20 @@ public final class JobCollector: @unchecked Sendable {
     private var logs: [String] = []
     private var auditEvents: [AuditEvent] = []
     private var state: [String: Any] = [:]
+    private let targetRepos: Set<String>?
     private let onEvent: (RunEvent) -> Void
 
-    public init(onEvent: @escaping (RunEvent) -> Void) {
+    public init(initialState: [String: String] = [:],
+                targetRepos: Set<String>? = nil,
+                onEvent: @escaping (RunEvent) -> Void) {
+        self.targetRepos = targetRepos
         self.onEvent = onEvent
+        for (key, json) in initialState {
+            guard let data = json.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data,
+                                                                options: [.fragmentsAllowed]) else { continue }
+            state[key] = value
+        }
     }
 
     // MARK: Repos
@@ -85,7 +95,18 @@ public final class JobCollector: @unchecked Sendable {
 
     // MARK: Execution plan (recording handle, update dry runs)
 
+    /// True when canary targeting excludes this repo from the plan.
+    public func isOutsideCanary(_ repo: String) -> Bool {
+        guard let targetRepos else { return false }
+        return !targetRepos.contains(repo)
+    }
+
     public func recordAction(repo: String, _ action: PlannedAction) {
+        if isOutsideCanary(repo) {
+            upsert(repo: self.repo(named: repo), status: .skipped,
+                   reason: "outside canary target — actions dropped (dry run)")
+            return
+        }
         lock.lock()
         plannedActions[repo, default: []].append(action)
         let count = plannedActions[repo]?.count ?? 0
@@ -102,6 +123,21 @@ public final class JobCollector: @unchecked Sendable {
     public var snapshotPlan: [String: [PlannedAction]] {
         lock.lock(); defer { lock.unlock() }
         return plannedActions
+    }
+
+    /// JSON-encoded state for persistence and cross-run hand-off.
+    public var snapshotState: [String: String] {
+        lock.lock(); defer { lock.unlock() }
+        var encoded: [String: String] = [:]
+        for (key, value) in state {
+            guard JSONSerialization.isValidJSONObject(value)
+                    || value is String || value is NSNumber || value is NSNull,
+                  let data = try? JSONSerialization.data(withJSONObject: value,
+                                                         options: [.fragmentsAllowed]),
+                  let json = String(data: data, encoding: .utf8) else { continue }
+            encoded[key] = json
+        }
+        return encoded
     }
 
     // MARK: Logs, progress, audit

@@ -12,11 +12,14 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     private let apiHost: URL
     private let tokenProvider: TokenProvider
     private let session: URLSession
+    private let rateLimit: RateLimitMonitor?
 
-    public init(apiHost: String, tokenProvider: @escaping TokenProvider, session: URLSession = .shared) {
+    public init(apiHost: String, tokenProvider: @escaping TokenProvider,
+                session: URLSession = .shared, rateLimit: RateLimitMonitor? = nil) {
         self.apiHost = URL(string: apiHost) ?? URL(string: "https://api.github.com")!
         self.tokenProvider = tokenProvider
         self.session = session
+        self.rateLimit = rateLimit
     }
 
     // MARK: Requests
@@ -51,6 +54,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw GitHubClientError.invalidResponse("non-HTTP response")
         }
+        rateLimit?.update(from: http)
         if http.statusCode == 403 || http.statusCode == 429 {
             let remaining = http.value(forHTTPHeaderField: "x-ratelimit-remaining")
             if remaining == "0" || http.statusCode == 429 {

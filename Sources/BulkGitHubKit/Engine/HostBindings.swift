@@ -73,9 +73,13 @@ enum HostBindings {
 
         let listOrgRepos: @convention(block) () -> JSValue = {
             hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
-                let repos = try await github.listOrgRepos(org: organisation)
+                let all = try await github.listOrgRepos(org: organisation)
+                let repos = all.filter { !collector.isOutsideCanary($0.fullName) }
                 collector.registerCandidates(repos)
-                collector.audit(kind: "gh.listOrgRepos", repo: nil, detail: "→ \(repos.count) repos")
+                let detail = repos.count == all.count
+                    ? "→ \(repos.count) repos"
+                    : "→ \(repos.count) of \(all.count) repos (canary target)"
+                collector.audit(kind: "gh.listOrgRepos", repo: nil, detail: detail)
                 return repos.map(\.scriptValue)
             }
         }
@@ -87,7 +91,8 @@ enum HostBindings {
                 return rejectedPromise("searchCode: query string is required")
             }
             return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
-                let repos = try await github.searchCode(org: organisation, query: query)
+                let all = try await github.searchCode(org: organisation, query: query)
+                let repos = all.filter { !collector.isOutsideCanary($0.fullName) }
                 collector.registerCandidates(repos)
                 collector.audit(kind: "gh.searchCode", repo: nil,
                                 detail: "\(query) → \(repos.count) candidate repos")

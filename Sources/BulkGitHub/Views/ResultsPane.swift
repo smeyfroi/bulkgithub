@@ -41,6 +41,14 @@ struct ResultsPane: View {
                     .truncationMode(.tail)
             }
         }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let id = ids.first {
+                Button("Use \"\(id)\" as canary target") {
+                    model.canaryRepo = id
+                    model.setPhase(.update)
+                }
+            }
+        }
     }
 
     private func detailText(for result: RepoResult) -> String {

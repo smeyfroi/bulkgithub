@@ -10,6 +10,11 @@ public struct EngineConfiguration: Sendable {
     public var maxRunSeconds: Double = 900
     /// Concurrent host (GitHub) calls; scripts may Promise.all freely.
     public var maxConcurrentHostCalls: Int = 8
+    /// Canary targeting: when set, repo enumeration (listOrgRepos/searchCode)
+    /// only returns these repos, and recorded write actions for any other
+    /// repo are dropped (marked "outside canary target") — so an update can
+    /// be trialled against a single repository first.
+    public var targetRepos: Set<String>?
 
     public init() {}
 
@@ -46,9 +51,12 @@ public final class ScriptEngine {
                     github: GitHubClient,
                     organisation: String,
                     configuration: EngineConfiguration = EngineConfiguration(),
+                    initialState: [String: String] = [:],
                     onEvent: @escaping (RunEvent) -> Void) async -> RunOutcome {
         let start = Date()
-        let collector = JobCollector(onEvent: onEvent)
+        let collector = JobCollector(initialState: initialState,
+                                     targetRepos: configuration.targetRepos,
+                                     onEvent: onEvent)
         let cancel = CancelBox()
         let limiter = AsyncSemaphore(configuration.maxConcurrentHostCalls)
 
@@ -58,6 +66,7 @@ public final class ScriptEngine {
                        logs: collector.snapshotLogs,
                        auditEvents: collector.snapshotAudit,
                        plannedActions: collector.snapshotPlan,
+                       state: collector.snapshotState,
                        duration: Date().timeIntervalSince(start))
         }
 

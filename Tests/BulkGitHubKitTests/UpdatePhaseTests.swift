@@ -140,6 +140,121 @@ struct UpdatePhaseTests {
     }
 }
 
+@Suite("Cross-phase state and canary")
+struct StateAndCanaryTests {
+
+    @Test("check results carry into update via job state — the search never repeats")
+    func stateCarryOver() async throws {
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+
+        let checkRecipe = try #require(ResourceLocator.recipe(named: "find_string_in_path"))
+        let check = try pipeline.validate(source: checkRecipe)
+        let checkOutcome = await ScriptEngine().run(javaScript: check.javaScript,
+                                                    phase: .check,
+                                                    params: check.meta.params,
+                                                    github: FixtureGitHubClient.demo(),
+                                                    organisation: "geome",
+                                                    onEvent: { _ in })
+        #expect(checkOutcome.state["stringMatches"]?.contains("web-frontend") == true)
+
+        let updateRecipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
+        let update = try pipeline.validate(source: updateRecipe)
+        let client = FixtureGitHubClient.demo()
+        let updateOutcome = await ScriptEngine().run(javaScript: update.javaScript,
+                                                     phase: .update,
+                                                     params: update.meta.params,
+                                                     github: client,
+                                                     organisation: "geome",
+                                                     initialState: checkOutcome.state,
+                                                     onEvent: { _ in })
+        #expect(updateOutcome.status == .completed)
+        #expect(updateOutcome.plannedActions.keys.sorted()
+                == ["geome/data-pipeline", "geome/web-frontend"])
+
+        // No org enumeration, no tree listings — and only the two matched
+        // files re-fetched for fresh diffs.
+        #expect(!client.callLog.contains { $0.hasPrefix("listOrgRepos") })
+        #expect(!client.callLog.contains { $0.hasPrefix("listFiles") })
+        #expect(client.callLog.filter { $0.hasPrefix("getContent") }.count == 2)
+    }
+
+    @Test("canary confines a full-scan update to one repo")
+    func canaryFullScan() async throws {
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let recipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
+        let validated = try pipeline.validate(source: recipe)
+
+        var configuration = EngineConfiguration()
+        configuration.targetRepos = ["geome/data-pipeline"]
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: .update,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               configuration: configuration,
+                                               onEvent: { _ in })
+        #expect(Array(outcome.plannedActions.keys) == ["geome/data-pipeline"])
+        #expect(outcome.results.map(\.id) == ["geome/data-pipeline"])
+    }
+
+    @Test("canary drops carried-over actions for non-target repos")
+    func canaryWithState() async throws {
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let recipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
+        let validated = try pipeline.validate(source: recipe)
+
+        let state = ["stringMatches": """
+        [{"repo":"geome/web-frontend","defaultBranch":"main","paths":["deploy/infra.json"]},\
+        {"repo":"geome/data-pipeline","defaultBranch":"master","paths":["deploy/keys.yml"]}]
+        """]
+        var configuration = EngineConfiguration()
+        configuration.targetRepos = ["geome/data-pipeline"]
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: .update,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               configuration: configuration,
+                                               initialState: state,
+                                               onEvent: { _ in })
+        #expect(Array(outcome.plannedActions.keys) == ["geome/data-pipeline"])
+        let web = outcome.results.first { $0.id == "geome/web-frontend" }
+        #expect(web?.status == .skipped)
+        #expect(web?.reason?.contains("canary") == true)
+    }
+}
+
+@Suite("Rate limit and recipe catalog")
+struct SupportingFeatureTests {
+
+    @Test("rate limit monitor parses GitHub quota headers")
+    func rateLimitParsing() throws {
+        let monitor = RateLimitMonitor()
+        #expect(monitor.display == nil)
+        let response = try #require(HTTPURLResponse(
+            url: URL(string: "https://api.github.com/repos/x/y")!,
+            statusCode: 200, httpVersion: nil,
+            headerFields: ["X-RateLimit-Remaining": "4321",
+                           "X-RateLimit-Limit": "5000",
+                           "X-RateLimit-Reset": "1765400000"]))
+        monitor.update(from: response)
+        #expect(monitor.display == "API 4321/5000")
+        #expect(!monitor.isLow)
+        #expect(monitor.snapshot.resetAt != nil)
+    }
+
+    @Test("every catalog recipe resolves and declares its advertised phase")
+    func catalogConsistency() throws {
+        #expect(RecipeCatalog.all.count == 3)
+        for recipe in RecipeCatalog.all {
+            let source = try #require(recipe.source, "missing source for \(recipe.id)")
+            #expect(ValidationPipeline.sniffPhase(from: source) == recipe.phase,
+                    "\(recipe.id) phase mismatch")
+            #expect(!recipe.prompt.isEmpty)
+        }
+    }
+}
+
 @Suite("Diff builder")
 struct DiffBuilderTests {
 
