@@ -511,17 +511,13 @@ final class AppModel {
     }
 
     /// Re-run the reviewed dry-run plan with writes ARMED for the selected
-    /// repos. The engine enforces plan conformance and the drift guard; the
-    /// live client additionally has writes hard-disabled in this build, so
-    /// armed runs are only possible against fixture data.
+    /// repos. The engine enforces plan conformance and the drift guard;
+    /// in live mode this REALLY writes to GitHub — the Apply sheet is the
+    /// explicit confirmation step.
     func applyPlan(to repoIDs: Set<String>) {
         guard !running, !generating, phase == .update || phase == .merge else { return }
         guard !repoIDs.isEmpty, !plannedActions.isEmpty,
               plannedActionsPhase == phase else { return }
-        guard settings.useFixtureGitHub else {
-            statusLine = "Live GitHub writes are disabled in this build — armed runs work against fixture data only"
-            return
-        }
         runTask = Task { await runInternal(writeMode: .armed, armedTargets: repoIDs) }
     }
 

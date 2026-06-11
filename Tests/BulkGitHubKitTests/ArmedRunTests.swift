@@ -241,21 +241,32 @@ struct ArmedRunTests {
         #expect(message2.contains("plan"))
     }
 
-    @Test("live GitHub writes are hard-disabled at the client")
-    func liveWritesDisabled() async {
-        #expect(!LiveGitHubClient.liveWritesEnabled)
+    @Test("live writes fail closed without credentials — no request leaves the box")
+    func liveWritesRequireCredentials() async {
+        // The kill switch is now open (0.4.0) — writes are guarded by the
+        // engine's armed bindings and the arming confirmation instead. With
+        // no token, every write throws before any request is even built, so
+        // this test exercises the live write paths without touching the
+        // network.
+        #expect(LiveGitHubClient.liveWritesEnabled)
         let client = LiveGitHubClient(apiHost: "https://api.github.com",
-                                      tokenProvider: { "test-token" })
-        await #expect(throws: GitHubClientError.writesDisabled) {
+                                      tokenProvider: { nil })
+        await #expect(throws: GitHubClientError.missingCredentials) {
             _ = try await client.createBranch(repo: "geome/x", name: "bulkgh/t", fromSha: "abc")
         }
-        await #expect(throws: GitHubClientError.writesDisabled) {
+        await #expect(throws: GitHubClientError.missingCredentials) {
             _ = try await client.putContent(repo: "geome/x", path: "f", content: "c",
                                             branch: "bulkgh/t", message: "m")
         }
-        await #expect(throws: GitHubClientError.writesDisabled) {
+        await #expect(throws: GitHubClientError.missingCredentials) {
             _ = try await client.createPR(repo: "geome/x", head: "bulkgh/t", base: "main",
                                           title: "t", body: "b")
+        }
+        await #expect(throws: GitHubClientError.missingCredentials) {
+            _ = try await client.mergePR(repo: "geome/x", number: 1, expectedHeadSha: "abc")
+        }
+        await #expect(throws: GitHubClientError.missingCredentials) {
+            try await client.deleteBranch(repo: "geome/x", name: "bulkgh/t")
         }
     }
 }

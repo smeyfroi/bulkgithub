@@ -85,7 +85,7 @@ credentials are stored (Keychain only; scripts can never read them).
       key-value pair was last in its object
 - [x] Repo selection + write arming (phase 4, with the guarded live handle)
 
-## Phase 4 status (write mode — writes currently hard-disabled)
+## Phase 4 status (write mode)
 
 - [x] Guarded write handle: the same reviewed script re-runs unchanged with
       writes armed, gated in order by repo selection, conformance with the
@@ -100,13 +100,16 @@ credentials are stored (Keychain only; scripts can never read them).
 - [x] Artifact registry: branches and PRs created by armed runs are recorded
       on the job (with links) — later phases' merge/cancel operate only on
       these
-- [x] **Live GitHub writes hard-disabled** (`LiveGitHubClient.liveWritesEnabled`
-      is `false`; enabling requires a code change and release): the armed
-      workflow runs against fixture data until shaken down end to end
-- [ ] Enable live writes once the workflow has been exercised
-- [ ] Resume semantics for partially-applied repos (currently: halt safely)
+- [x] Kill switch (`LiveGitHubClient.liveWritesEnabled`): v0.3.0 shipped
+      provably inert; **0.4.0 flips it on** after the full loop was rehearsed
+      offline with every guard exercised. Reverting to an inert build is a
+      one-line change. Live writes are reachable only through the engine's
+      armed bindings, behind the Apply sheet's explicit confirmation, which
+      states in red that writes go to live GitHub
+- [ ] Resume semantics for partially-applied repos (currently: halt safely;
+      "Cancel job" is the clean-up path)
 
-## Phase 5 status (guarded merge and cancel — writes still hard-disabled)
+## Phase 5 status (guarded merge and cancel)
 
 - [x] Registry-scoped merge surface (`bulkgh.merge.d.ts`): `listJobPRs` /
       `mergePR` / `closePR` / `deleteBranch` exist only for merge-phase
@@ -122,7 +125,7 @@ credentials are stored (Keychain only; scripts can never read them).
 - [x] Recipes: "Merge approved PRs" and "Cancel job"; full loop rehearsed
       offline — check → update → apply → approve → merge/cancel — against
       the stateful fixture client
-- [ ] Live merge writes (same kill switch as phase 4)
+- [x] Live merge writes (same kill switch as phase 4; enabled in 0.4.0)
 
 ## License
 

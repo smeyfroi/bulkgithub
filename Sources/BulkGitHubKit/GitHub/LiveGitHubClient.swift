@@ -9,11 +9,14 @@ import Foundation
 public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     public typealias TokenProvider = @Sendable () -> String?
 
-    /// HARD KILL SWITCH for live writes. The armed workflow ships exercised
-    /// against fixture data only; flipping this requires a deliberate code
-    /// change and a release, not a settings toggle. Keep false until the
-    /// arming UX and drift guard have been shaken down end to end.
-    public static let liveWritesEnabled = false
+    /// Kill switch for live writes. Flipped to true (2026-06-11, for 0.4.0)
+    /// after the full check → update → apply → approve → merge/cancel loop
+    /// was rehearsed against fixtures with every guard exercised. Writes
+    /// remain reachable ONLY through the engine's armed bindings (repo
+    /// selection, plan conformance, drift guard, idempotency) behind the
+    /// explicit arming confirmation in the app. Set back to false to make a
+    /// provably-inert build.
+    public static let liveWritesEnabled = true
 
     private let apiHost: URL
     private let tokenProvider: TokenProvider

@@ -135,9 +135,9 @@ struct ApplySheet: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
             } else {
-                Label("Live GitHub writes are disabled in this build — switch to fixture data to exercise the armed workflow",
-                      systemImage: "lock.fill")
-                    .font(.callout.weight(.medium))
+                Label("Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Branches and PRs will really be created.",
+                      systemImage: "bolt.horizontal.circle.fill")
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(.red)
             }
 
@@ -173,7 +173,7 @@ struct ApplySheet: View {
                     Label("Arm and apply to \(selected.count) repo\(selected.count == 1 ? "" : "s")",
                           systemImage: "bolt.fill")
                 }
-                .disabled(selected.isEmpty || !model.settings.useFixtureGitHub)
+                .disabled(selected.isEmpty)
             }
         }
         .padding(16)
