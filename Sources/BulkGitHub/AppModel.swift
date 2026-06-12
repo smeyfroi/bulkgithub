@@ -515,8 +515,26 @@ final class AppModel {
         prompt = recipe.prompt
         promptsByPhase[recipe.phase] = recipe.prompt
         scriptsByPhase[recipe.phase] = source
+        // The params belong to the script: a replaced script means a fresh
+        // draft (and fresh declared defaults), not the previous script's
+        // values lingering in the bar.
+        paramsDraft = [:]
+        paramsByPhase[recipe.phase] = [:]
+        declaredParamsByPhase[recipe.phase] = nil
         diagnostics = []
-        statusLine = "Loaded recipe — Check to type-check, Run to execute"
+        statusLine = "Loaded \"\(recipe.title)\""
+        // Validate right away so the param bar repopulates from the recipe's
+        // meta.params without waiting for a manual Check. Any in-flight
+        // validation of the replaced script must fully drain first (its
+        // results are discarded by the stale-source guard) — validate()
+        // would otherwise JOIN it and return the old script's result.
+        Task { [weak self] in
+            while let task = self?.validationTask {
+                _ = await task.value
+                await Task.yield()
+            }
+            await self?.validate()
+        }
     }
 
     func loadRecipe(named name: String) {
@@ -645,6 +663,12 @@ final class AppModel {
                 switch PromptLibrary.parseGeneration(from: raw) {
                 case .script(let script) where !script.isEmpty:
                     scriptText = script
+                    // A generated script replaces the old one wholesale, so
+                    // its declared params must win — stale draft values from
+                    // the previous script would override what the model just
+                    // wrote (e.g. values it patched in from the prompt).
+                    paramsDraft = [:]
+                    declaredParamsByPhase[phase] = nil
                     statusLine = "Script generated — review before running"
                     generating = false
                     await validate()
@@ -700,6 +724,9 @@ final class AppModel {
             let validated = try await Task.detached(priority: .userInitiated) {
                 try pipeline.validate(source: source)
             }.value
+            // The editor moved on mid-validation (recipe load, regenerate):
+            // this result describes a script that is no longer on screen.
+            guard source == scriptText else { return nil }
             diagnostics = validated.diagnostics
             var merged = validated.meta.params
             for (key, value) in paramsDraft where merged[key] != nil {
@@ -726,10 +753,12 @@ final class AppModel {
             statusLine = "Valid — \(validated.meta.title)"
             return validated
         } catch let error as ValidationError {
+            guard source == scriptText else { return nil }
             diagnostics = error.diagnostics
             statusLine = error.errorDescription ?? "Validation failed"
             return nil
         } catch {
+            guard source == scriptText else { return nil }
             statusLine = "Validation failed: \(error.localizedDescription)"
             return nil
         }
