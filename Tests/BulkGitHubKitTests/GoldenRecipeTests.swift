@@ -367,9 +367,14 @@ struct CatalogRecipeTests {
 
         #expect(byRepo["example-org/api-service"]?.status == .verifiedMatch)
         #expect(byRepo["example-org/api-service"]?.evidence.first?.path == "deploy/logging.yml")
+        // Nested key in a CloudFormation .template with custom tags — the
+        // real-world shape; the explanation carries the dotted path.
+        #expect(byRepo["example-org/data-pipeline"]?.status == .verifiedMatch)
+        #expect(byRepo["example-org/data-pipeline"]?.evidence.first?.path == "deploy/prod_permanent.template")
+        #expect(byRepo["example-org/data-pipeline"]?.evidence.first?.explanation?
+            .contains("Resources.LogGroup.Properties.RetentionInDays") == true)
         #expect(byRepo["example-org/web-frontend"]?.status == .skipped)        // 30, differs
         #expect(byRepo["example-org/web-frontend"]?.reason?.contains("differs") == true)
-        #expect(byRepo["example-org/data-pipeline"]?.status == .skipped)       // key absent
         #expect(byRepo["example-org/legacy-batch"]?.status == .skipped)        // archived
         #expect(byRepo["example-org/infra-tools"]?.status == .skipped)         // no files
         #expect(byRepo["example-org/docs-site"]?.status == .skipped)           // no deploy/

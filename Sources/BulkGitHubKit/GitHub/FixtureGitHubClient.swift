@@ -369,7 +369,9 @@ extension FixtureGitHubClient {
         """
 
         // The glob key/value scenario (Find YAML key/value under path glob):
-        // RetentionInDays matches in api, differs in web, absent elsewhere.
+        // RetentionInDays matches in api (top-level) and pipeline (nested in
+        // a CloudFormation .template with custom tags — the real-world
+        // shape), differs in web, absent elsewhere.
         let retention14 = """
         logGroup: app
         RetentionInDays: 14
@@ -377,6 +379,26 @@ extension FixtureGitHubClient {
         let retention30 = """
         logGroup: web
         RetentionInDays: 30
+        """
+        let cloudFormationTemplate = """
+        AWSTemplateFormatVersion: '2010-09-09'
+        Resources:
+          LogGroup:
+            Type: AWS::Logs::LogGroup
+            Properties:
+              RetentionInDays: 14
+              LogGroupName: "/example-org/data-pipeline"
+            DeletionPolicy: RetainExceptOnCreate
+          PipelineDomain:
+            Type: AWS::Route53::RecordSet
+            Properties:
+              Name: data-pipeline.example.com
+              ResourceRecords:
+              - !GetAtt
+                - PipelineCluster
+                - Endpoint.Address
+              Type: CNAME
+              TTL: 300
         """
 
         // The marker-block scenario (Delete lines between marker text):
@@ -413,6 +435,7 @@ extension FixtureGitHubClient {
                                "deploy/maintenance.yml": markedMaintenance],
                 pipeline.fullName: ["deploy/prod.yml": matchingYAML,
                                     "deploy/keys.yml": deployKeyYAML,
+                                    "deploy/prod_permanent.template": cloudFormationTemplate,
                                     "README.md": "# data-pipeline\n",
                                     "project.json": railsProject],
                 legacy.fullName: ["deploy/prod.yml": matchingYAML,
