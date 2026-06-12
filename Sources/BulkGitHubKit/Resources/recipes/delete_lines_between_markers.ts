@@ -3,7 +3,7 @@ const meta: ScriptMeta = {
   phase: "update",
   apiVersion: 1,
   params: {
-    glob: "deploy/**",
+    glob: "deploy/*.template",
     startMarker: "# >>>",
     endMarker: "# <<<",
     branch: "bulkgh/delete-marked-block",

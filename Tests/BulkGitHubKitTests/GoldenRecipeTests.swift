@@ -398,37 +398,35 @@ struct CatalogRecipeTests {
 
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
-        #expect(statusByRepo["example-org/api-service"] == .planned)
-        #expect(statusByRepo["example-org/web-frontend"] == .planned)
-        #expect(statusByRepo["example-org/data-pipeline"] == .skipped)   // no marked blocks
+        // Only the .template glob is in scope: the yml marker blocks in api
+        // and web are deliberately outside it (widen the glob param to
+        // deploy/** to catch them).
+        #expect(statusByRepo["example-org/data-pipeline"] == .planned)
+        #expect(statusByRepo["example-org/api-service"] == .skipped)
+        #expect(statusByRepo["example-org/web-frontend"] == .skipped)
         #expect(statusByRepo["example-org/legacy-batch"] == .skipped)    // archived
         #expect(statusByRepo["example-org/flaky-service"] == .failed)
 
-        let apiActions = try #require(outcome.plannedActions["example-org/api-service"])
-        #expect(apiActions.count == 3)
-        guard case .createBranch(let branch, _) = apiActions[0] else {
+        let actions = try #require(outcome.plannedActions["example-org/data-pipeline"])
+        #expect(actions.count == 3)
+        guard case .createBranch(let branch, _) = actions[0] else {
             Issue.record("expected createBranch first"); return
         }
         #expect(branch == "bulkgh/delete-marked-block")
-        guard case .putContent(let path, _, _, _, let after) = apiActions[1] else {
+        guard case .putContent(let path, _, _, _, let after) = actions[1] else {
             Issue.record("expected putContent second"); return
         }
-        #expect(path == "deploy/cron.yml")
-        #expect(after == """
-        jobs:
-          - daily_report
-        """)
-        guard case .createPR(_, let title, _) = apiActions[2] else {
+        #expect(path == "deploy/prod_permanent.template")
+        // The annotated block goes, markers included; neighbours survive.
+        #expect(!after.contains("PG14"))
+        #expect(!after.contains("aurora-postgresql14"))
+        #expect(!after.contains("# >>>"))
+        #expect(after.contains("LogGroup"))
+        #expect(after.contains("PipelineDomain"))
+        guard case .createPR(_, let title, _) = actions[2] else {
             Issue.record("expected createPR third"); return
         }
         #expect(title == "Delete marked block")
-
-        let webEdits = try #require(outcome.plannedActions["example-org/web-frontend"])
-            .compactMap { action -> String? in
-                guard case .putContent(_, _, _, _, let after) = action else { return nil }
-                return after
-            }
-        #expect(webEdits == ["window: nightly\nnotify: ops"])
     }
 
     @Test("change-value dry run rewrites the line, preserving everything else")
@@ -493,10 +491,11 @@ struct CatalogRecipeTests {
         #expect(ValidationPipeline.sniffPhase(from: glob) == .check)
 
         let marker = try await MockLLMClient().makeScript(
-            prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\"",
+            prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\" in files under deploy/*.template",
             context: ScriptGenerationContext(organisation: "example-org", phase: .update))
         #expect(marker.contains("startMarker: \"# >>>\""))
         #expect(marker.contains("endMarker: \"# <<<\""))
+        #expect(marker.contains("glob: \"deploy/*.template\""))
         #expect(ValidationPipeline.sniffPhase(from: marker) == .update)
 
         let change = try await MockLLMClient().makeScript(

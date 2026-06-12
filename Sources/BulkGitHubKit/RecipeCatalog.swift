@@ -72,7 +72,7 @@ public enum RecipeCatalog {
                systemImage: "text.badge.minus"),
         Recipe(id: "delete_lines_between_markers",
                title: "Delete lines between marker text",
-               prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\"",
+               prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\" in files under deploy/*.template",
                phase: .update,
                systemImage: "pencil.slash"),
         Recipe(id: "merge_approved_prs",

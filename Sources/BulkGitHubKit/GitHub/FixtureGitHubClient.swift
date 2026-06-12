@@ -389,6 +389,13 @@ extension FixtureGitHubClient {
               RetentionInDays: 14
               LogGroupName: "/example-org/data-pipeline"
             DeletionPolicy: RetainExceptOnCreate
+          # >>> PG14 TO BE DELETED
+          OldParameterGroup:
+            Type: AWS::RDS::DBClusterParameterGroup
+            Properties:
+              Description: Optimised postgres14 parameter group
+              Family: aurora-postgresql14
+          # <<< PG14 TO BE DELETED
           PipelineDomain:
             Type: AWS::Route53::RecordSet
             Properties:
@@ -401,8 +408,11 @@ extension FixtureGitHubClient {
               TTL: 300
         """
 
-        // The marker-block scenario (Delete lines between marker text):
-        // "# >>> … # <<<" blocks in api and web, none elsewhere.
+        // The marker-block scenario (Delete lines between marker text): the
+        // recipe's default glob is deploy/*.template, hitting the annotated
+        // PG14 block in pipeline's CloudFormation template. The yml marker
+        // blocks in api and web sit outside that glob — they're there for
+        // widening the glob param to deploy/** and catching more.
         let markedCron = """
         jobs:
           # >>>
