@@ -4,6 +4,21 @@ import BulkGitHubKit
 struct ResultsPane: View {
     @Environment(AppModel.self) private var model
 
+    /// Table selection that survives streaming updates. While a run is
+    /// appending rows, the NSTableView-backed Table reloads and writes nil
+    /// back through its selection binding — so clicking a row mid-run
+    /// flashed selected and immediately deselected. A run never deselects
+    /// on the user's behalf; explicit clicks on other rows still apply.
+    private var runSafeSelection: Binding<String?> {
+        Binding(
+            get: { model.selectedRepo },
+            set: { newValue in
+                if newValue == nil && model.running { return }
+                model.selectedRepo = newValue
+            }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if model.resultsAreStale {
@@ -51,7 +66,7 @@ struct ResultsPane: View {
             .padding(.vertical, 5)
             .overlay(alignment: .bottom) { Divider() }
 
-            Table(model.mergeRows, selection: $model.selectedRepo) {
+            Table(model.mergeRows, selection: runSafeSelection) {
                 TableColumn("Approved") { (row: AppModel.MergeRow) in
                     Toggle("", isOn: Binding(
                         get: { row.approved },
@@ -101,7 +116,7 @@ struct ResultsPane: View {
 
     private var checkTable: some View {
         @Bindable var model = model
-        return Table(model.results, selection: $model.selectedRepo) {
+        return Table(model.results, selection: runSafeSelection) {
             TableColumn("Status") { (result: RepoResult) in
                 StatusBadge(status: result.status)
             }
@@ -129,7 +144,7 @@ struct ResultsPane: View {
 
     private var updateTable: some View {
         @Bindable var model = model
-        return Table(model.updateRows, selection: $model.selectedRepo) {
+        return Table(model.updateRows, selection: runSafeSelection) {
             TableColumn("Check") { (row: AppModel.UpdateRow) in
                 if let check = row.check {
                     StatusBadge(status: check.status)
