@@ -8,7 +8,7 @@ struct StreamingTests {
     @Test("mock client streams in chunks that assemble to the full script")
     func mockStreams() async throws {
         let client = MockLLMClient()
-        let context = ScriptGenerationContext(organisation: "geome")
+        let context = ScriptGenerationContext(organisation: "example-org")
         let prompt = "find repos with a file at deploy/prod.yml where the key account_id has a value of \"42\""
 
         var raw = ""
@@ -40,7 +40,7 @@ struct StreamingTests {
         }
         var deltas: [String] = []
         for try await event in OneShot().streamScript(prompt: "p",
-                                                      context: .init(organisation: "geome")) {
+                                                      context: .init(organisation: "example-org")) {
             if case .delta(let chunk) = event { deltas.append(chunk) }
         }
         #expect(deltas.count == 1)

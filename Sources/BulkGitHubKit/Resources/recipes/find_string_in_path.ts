@@ -4,7 +4,7 @@ const meta: ScriptMeta = {
   apiVersion: 1,
   params: {
     glob: "deploy/**",
-    needle: "ec2-shell-prod-eu-west-1-keypair-1",
+    needle: "legacy-deploy-key-2019",
   },
 };
 

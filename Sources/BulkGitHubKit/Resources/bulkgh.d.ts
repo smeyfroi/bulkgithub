@@ -14,7 +14,7 @@
  */
 
 interface Repo {
-  /** "owner/name", e.g. "geome/api-service" */
+  /** "owner/name", e.g. "example-org/api-service" */
   readonly fullName: string;
   readonly name: string;
   readonly defaultBranch: string;

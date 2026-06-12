@@ -16,21 +16,21 @@ struct MergePhaseTests {
         let recipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
         let validated = try pipeline.validate(source: recipe)
         let state = ["stringMatches": """
-        [{"repo":"geome/web-frontend","defaultBranch":"main","paths":["deploy/infra.json"]},\
-        {"repo":"geome/data-pipeline","defaultBranch":"master","paths":["deploy/keys.yml"]}]
+        [{"repo":"example-org/web-frontend","defaultBranch":"main","paths":["deploy/infra.json"]},\
+        {"repo":"example-org/data-pipeline","defaultBranch":"master","paths":["deploy/keys.yml"]}]
         """]
 
         let dryRun = await ScriptEngine().run(javaScript: validated.javaScript, phase: .update,
                                               params: validated.meta.params, github: client,
-                                              organisation: "geome", initialState: state,
+                                              organisation: "example-org", initialState: state,
                                               onEvent: { _ in })
         var configuration = EngineConfiguration()
         configuration.writeMode = .armed
-        configuration.targetRepos = ["geome/web-frontend", "geome/data-pipeline"]
+        configuration.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
         configuration.referencePlan = dryRun.plannedActions
         let applied = await ScriptEngine().run(javaScript: validated.javaScript, phase: .update,
                                                params: validated.meta.params, github: client,
-                                               organisation: "geome", configuration: configuration,
+                                               organisation: "example-org", configuration: configuration,
                                                initialState: state, onEvent: { _ in })
         #expect(applied.artifacts.count == 4)
         return (applied.artifacts, client.createdPRs)
@@ -61,10 +61,10 @@ struct MergePhaseTests {
         dryConfig.approvals = approved
         let plan = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
                                             params: merge.meta.params, github: client,
-                                            organisation: "geome", configuration: dryConfig,
+                                            organisation: "example-org", configuration: dryConfig,
                                             onEvent: { _ in })
         #expect(plan.status == .completed)
-        #expect(plan.plannedActions.keys.sorted() == ["geome/data-pipeline", "geome/web-frontend"])
+        #expect(plan.plannedActions.keys.sorted() == ["example-org/data-pipeline", "example-org/web-frontend"])
         for actions in plan.plannedActions.values {
             #expect(actions.count == 2)  // mergePR + deleteBranch
         }
@@ -73,16 +73,16 @@ struct MergePhaseTests {
         // Armed: conforms to the plan and executes.
         var armedConfig = dryConfig
         armedConfig.writeMode = .armed
-        armedConfig.targetRepos = ["geome/web-frontend", "geome/data-pipeline"]
+        armedConfig.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
         armedConfig.referencePlan = plan.plannedActions
         let armed = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
                                              params: merge.meta.params, github: client,
-                                             organisation: "geome", configuration: armedConfig,
+                                             organisation: "example-org", configuration: armedConfig,
                                              onEvent: { _ in })
         #expect(armed.status == .completed)
         #expect(client.createdPRs.allSatisfy { $0.state == "merged" })
-        #expect(client.createdBranches["geome/web-frontend"]?.isEmpty != false)
-        #expect(client.createdBranches["geome/data-pipeline"]?.isEmpty != false)
+        #expect(client.createdBranches["example-org/web-frontend"]?.isEmpty != false)
+        #expect(client.createdBranches["example-org/data-pipeline"]?.isEmpty != false)
         for result in armed.results { #expect(result.status == .merged) }
         let writes = armed.auditEvents.filter { $0.kind.hasPrefix("write.") }
         #expect(writes.count == 4)  // 2 × (merge + delete)
@@ -95,19 +95,19 @@ struct MergePhaseTests {
         let merge = try validatedMerge(named: "merge_approved_prs")
 
         // Approve only one of the two.
-        let webOnly = approvals(for: prs.filter { $0.repo == "geome/web-frontend" })
+        let webOnly = approvals(for: prs.filter { $0.repo == "example-org/web-frontend" })
         var config = EngineConfiguration()
         config.artifactRegistry = artifacts
         config.approvals = webOnly
         let plan = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
                                             params: merge.meta.params, github: client,
-                                            organisation: "geome", configuration: config,
+                                            organisation: "example-org", configuration: config,
                                             onEvent: { _ in })
         #expect(plan.status == .completed)
-        let pipeline = plan.results.first { $0.id == "geome/data-pipeline" }
+        let pipeline = plan.results.first { $0.id == "example-org/data-pipeline" }
         #expect(pipeline?.status == .blocked)
         #expect(pipeline?.reason?.contains("not approved") == true)
-        #expect(plan.plannedActions.keys.sorted() == ["geome/web-frontend"])
+        #expect(plan.plannedActions.keys.sorted() == ["example-org/web-frontend"])
     }
 
     @Test("a head that moved since approval halts the repo as conflicted")
@@ -118,9 +118,9 @@ struct MergePhaseTests {
         let approved = approvals(for: prs)
 
         // The branch moves after approval (another commit lands on it).
-        _ = try await client.putContent(repo: "geome/web-frontend", path: "deploy/infra.json",
+        _ = try await client.putContent(repo: "example-org/web-frontend", path: "deploy/infra.json",
                                         content: "moved after approval",
-                                        branch: "bulkgh/remove-keypair-reference",
+                                        branch: "bulkgh/remove-legacy-deploy-key",
                                         message: "drift")
 
         var config = EngineConfiguration()
@@ -128,13 +128,13 @@ struct MergePhaseTests {
         config.approvals = approved
         let plan = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
                                             params: merge.meta.params, github: client,
-                                            organisation: "geome", configuration: config,
+                                            organisation: "example-org", configuration: config,
                                             onEvent: { _ in })
-        let web = plan.results.first { $0.id == "geome/web-frontend" }
+        let web = plan.results.first { $0.id == "example-org/web-frontend" }
         #expect(web?.status == .conflicted)
         #expect(web?.reason?.contains("moved since approval") == true)
         // The untouched repo still plans normally.
-        #expect(plan.plannedActions.keys.sorted() == ["geome/data-pipeline"])
+        #expect(plan.plannedActions.keys.sorted() == ["example-org/data-pipeline"])
         #expect(client.createdPRs.allSatisfy { $0.state == "open" })
     }
 
@@ -143,10 +143,10 @@ struct MergePhaseTests {
         let client = FixtureGitHubClient.demo()
         let (artifacts, prs) = try await appliedJob(client: client)
         // A PR exists on the remote that this job did NOT create.
-        let foreign = try await client.createBranch(repo: "geome/api-service",
+        let foreign = try await client.createBranch(repo: "example-org/api-service",
                                                     name: "bulkgh/other-job", fromSha: "abc")
         _ = foreign
-        let foreignPR = try await client.createPR(repo: "geome/api-service",
+        let foreignPR = try await client.createPR(repo: "example-org/api-service",
                                                   head: "bulkgh/other-job", base: "main",
                                                   title: "other job", body: "")
 
@@ -159,7 +159,7 @@ struct MergePhaseTests {
         const meta = { title: "rogue merge", phase: "merge" as const, apiVersion: 1, params: {} };
         async function main(): Promise<void> {
           try {
-            await gh.mergePR("geome/api-service", \(foreignPR.number), { expectedHeadSha: "\(foreignPR.headSha)" });
+            await gh.mergePR("example-org/api-service", \(foreignPR.number), { expectedHeadSha: "\(foreignPR.headSha)" });
             job.log("no-throw");
           } catch (e) {
             job.log("threw: " + String(e));
@@ -170,7 +170,7 @@ struct MergePhaseTests {
         let validated = try pipeline.validate(source: script)
         let outcome = await ScriptEngine().run(javaScript: validated.javaScript, phase: .merge,
                                                params: [:], github: client,
-                                               organisation: "geome", configuration: config,
+                                               organisation: "example-org", configuration: config,
                                                onEvent: { _ in })
         #expect(outcome.logs.contains { $0.hasPrefix("threw:") && $0.contains("registry") })
         let pr = try await client.getPR(repo: foreignPR.repo, number: foreignPR.number)
@@ -187,22 +187,22 @@ struct MergePhaseTests {
         dryConfig.artifactRegistry = artifacts
         let plan = await ScriptEngine().run(javaScript: cancel.javaScript, phase: .merge,
                                             params: cancel.meta.params, github: client,
-                                            organisation: "geome", configuration: dryConfig,
+                                            organisation: "example-org", configuration: dryConfig,
                                             onEvent: { _ in })
         #expect(plan.status == .completed)
         #expect(plan.plannedActions.count == 2)  // close + delete per repo
 
         var armedConfig = dryConfig
         armedConfig.writeMode = .armed
-        armedConfig.targetRepos = ["geome/web-frontend", "geome/data-pipeline"]
+        armedConfig.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
         armedConfig.referencePlan = plan.plannedActions
         let armed = await ScriptEngine().run(javaScript: cancel.javaScript, phase: .merge,
                                              params: cancel.meta.params, github: client,
-                                             organisation: "geome", configuration: armedConfig,
+                                             organisation: "example-org", configuration: armedConfig,
                                              onEvent: { _ in })
         #expect(armed.status == .completed)
         #expect(client.createdPRs.allSatisfy { $0.state == "closed" })
-        #expect(client.createdBranches["geome/web-frontend"]?.isEmpty != false)
+        #expect(client.createdBranches["example-org/web-frontend"]?.isEmpty != false)
         for result in armed.results { #expect(result.status == .cancelled) }
         // Cancel needs no approvals — closing is winding back, not shipping.
     }

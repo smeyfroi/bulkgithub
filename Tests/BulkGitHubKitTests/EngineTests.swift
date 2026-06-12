@@ -13,7 +13,7 @@ struct EngineTests {
                                  phase: .check,
                                  params: params,
                                  github: client,
-                                 organisation: "geome",
+                                 organisation: "example-org",
                                  configuration: configuration,
                                  onEvent: { _ in })
     }
@@ -41,24 +41,24 @@ struct EngineTests {
         let outcome = await run("""
         async function main() {
           await gh.listOrgRepos();
-          await gh.getContent("geome/web-frontend", "deploy/infra.json");
-          job.reportMatch("geome/web-frontend", {
+          await gh.getContent("example-org/web-frontend", "deploy/infra.json");
+          job.reportMatch("example-org/web-frontend", {
             path: "deploy/infra.json",
-            excerpt: "\\"keyPair\\": \\"ec2-shell-prod-eu-west-1-keypair-1\\"",
+            excerpt: "\\"deployKey\\": \\"legacy-deploy-key-2019\\"",
           });
-          job.skip("geome/api-service", "ruled out");
+          job.skip("example-org/api-service", "ruled out");
         }
         """)
         #expect(outcome.status == .completed)
         var byRepo: [String: RepoResult] = [:]
         for result in outcome.results { byRepo[result.id] = result }
-        #expect(byRepo["geome/web-frontend"]?.status == .verifiedMatch)
-        #expect(byRepo["geome/api-service"]?.status == .skipped)
-        #expect(byRepo["geome/data-pipeline"]?.status == .noMatch)
+        #expect(byRepo["example-org/web-frontend"]?.status == .verifiedMatch)
+        #expect(byRepo["example-org/api-service"]?.status == .skipped)
+        #expect(byRepo["example-org/data-pipeline"]?.status == .noMatch)
 
         // The host pulls surrounding lines from the receipt-cached content so
         // the review pane can show the match in situ.
-        let evidence = byRepo["geome/web-frontend"]?.evidence.first
+        let evidence = byRepo["example-org/web-frontend"]?.evidence.first
         #expect(evidence?.context?.contains("\"region\": \"eu-west-1\",") == true)
         #expect(evidence?.contextStartLine == 1)
     }
@@ -67,10 +67,10 @@ struct EngineTests {
     func getRepoLookup() async {
         let outcome = await run("""
         async function main() {
-          const repo = await gh.getRepo("geome/data-pipeline");
+          const repo = await gh.getRepo("example-org/data-pipeline");
           job.log("branch=" + repo.defaultBranch);
           try {
-            await gh.getRepo("geome/no-such-repo");
+            await gh.getRepo("example-org/no-such-repo");
           } catch (e) {
             job.log("threw: " + String(e));
           }
@@ -114,7 +114,7 @@ struct EngineTests {
         let outcome = await run("""
         async function main() {
           try {
-            job.reportMatch("geome/api-service", { path: "deploy/prod.yml", excerpt: "x" });
+            job.reportMatch("example-org/api-service", { path: "deploy/prod.yml", excerpt: "x" });
             job.log("no-throw");
           } catch (e) {
             job.log("threw: " + String(e));
@@ -131,8 +131,8 @@ struct EngineTests {
     func receiptSatisfied() async {
         let outcome = await run("""
         async function main() {
-          const text = await gh.getContent("geome/api-service", "deploy/prod.yml");
-          job.reportMatch("geome/api-service", { path: "deploy/prod.yml", excerpt: text, explanation: "ok" });
+          const text = await gh.getContent("example-org/api-service", "deploy/prod.yml");
+          job.reportMatch("example-org/api-service", { path: "deploy/prod.yml", excerpt: text, explanation: "ok" });
         }
         """)
         #expect(outcome.status == .completed)
@@ -145,7 +145,7 @@ struct EngineTests {
     func errorIsolation() async {
         let outcome = await run("""
         async function main() {
-          const repos = ["geome/flaky-service", "geome/api-service"];
+          const repos = ["example-org/flaky-service", "example-org/api-service"];
           for (const repo of repos) {
             try {
               const text = await gh.getContent(repo, "deploy/prod.yml");
@@ -157,15 +157,15 @@ struct EngineTests {
         }
         """)
         #expect(outcome.status == .completed)
-        #expect(outcome.results.contains { $0.id == "geome/flaky-service" && $0.status == .failed })
-        #expect(outcome.logs.contains("geome/api-service ok true"))
+        #expect(outcome.results.contains { $0.id == "example-org/flaky-service" && $0.status == .failed })
+        #expect(outcome.logs.contains("example-org/api-service ok true"))
     }
 
     @Test("absent file resolves to null, not an error")
     func absentFile() async {
         let outcome = await run("""
         async function main() {
-          const text = await gh.getContent("geome/infra-tools", "deploy/prod.yml");
+          const text = await gh.getContent("example-org/infra-tools", "deploy/prod.yml");
           job.log("isNull=" + (text === null));
         }
         """)

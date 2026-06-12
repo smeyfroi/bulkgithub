@@ -360,7 +360,7 @@ public struct RunOutcome: Sendable {
 // MARK: - Settings
 
 public struct AppSettings: Codable, Sendable, Equatable {
-    public var organisation: String = "geome"
+    public var organisation: String = "example-org"
     public var webHost: String = "https://github.com"
     public var apiHost: String = "https://api.github.com"
     public var aiModel: String = ""        // empty = client default

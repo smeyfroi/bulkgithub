@@ -48,17 +48,17 @@ struct ListFilesTests {
     func listAndFilter() async {
         let outcome = await ScriptEngine().run(javaScript: """
         async function main() {
-          const all = await gh.listFiles("geome/api-service");
+          const all = await gh.listFiles("example-org/api-service");
           job.log("all=" + all.join(","));
-          const yml = await gh.listFiles("geome/api-service", "**/*.yml");
+          const yml = await gh.listFiles("example-org/api-service", "**/*.yml");
           job.log("yml=" + yml.length);
-          const deploy = await gh.listFiles("geome/api-service", "deploy/*.yml");
+          const deploy = await gh.listFiles("example-org/api-service", "deploy/*.yml");
           job.log("deploy=" + deploy.join(","));
-          const top = await gh.listFiles("geome/api-service", "*.yml");
+          const top = await gh.listFiles("example-org/api-service", "*.yml");
           job.log("top=" + top.length);
         }
         """, phase: .check, params: [:], github: FixtureGitHubClient.demo(),
-             organisation: "geome", onEvent: { _ in })
+             organisation: "example-org", onEvent: { _ in })
 
         #expect(outcome.status == .completed)
         #expect(outcome.logs.contains("all=.github/dependabot.yml,README.md,deploy/cron.yml,deploy/logging.yml,deploy/prod.yml,project.json"))
@@ -76,7 +76,7 @@ struct ListFilesTests {
         let source = """
         const meta = { title: "globs", phase: "check" };
         async function main(): Promise<void> {
-          const paths: string[] = await gh.listFiles("geome/x", "**/*.yml");
+          const paths: string[] = await gh.listFiles("example-org/x", "**/*.yml");
           job.log(String(paths.length));
         }
         """
@@ -121,7 +121,7 @@ struct CapabilityGapTests {
     func promptMentionsGap() {
         #expect(PromptLibrary.houseRules.contains("capability"))
         let system = PromptLibrary.systemPrompt(apiDeclaration: "declare const gh: unknown;",
-                                                organisation: "geome")
+                                                organisation: "example-org")
         #expect(system.contains("```capability-gap"))
     }
 }

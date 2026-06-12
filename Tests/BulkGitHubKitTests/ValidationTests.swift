@@ -80,7 +80,7 @@ struct ValidationTests {
                                                phase: meta.phase,
                                                params: meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
         #expect(outcome.status == .completed)
     }

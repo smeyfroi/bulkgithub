@@ -20,7 +20,7 @@ struct GoldenRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
 
         #expect(outcome.status == .completed)
@@ -28,19 +28,19 @@ struct GoldenRecipeTests {
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
 
-        #expect(statusByRepo["geome/api-service"] == .verifiedMatch)
-        #expect(statusByRepo["geome/data-pipeline"] == .verifiedMatch)
-        #expect(statusByRepo["geome/web-frontend"] == .skipped)
-        #expect(statusByRepo["geome/legacy-batch"] == .skipped)   // archived
-        #expect(statusByRepo["geome/infra-tools"] == .skipped)    // stale search hit
-        #expect(statusByRepo["geome/flaky-service"] == .failed)
-        #expect(statusByRepo["geome/docs-site"] == nil)           // never a candidate
+        #expect(statusByRepo["example-org/api-service"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/data-pipeline"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/web-frontend"] == .skipped)
+        #expect(statusByRepo["example-org/legacy-batch"] == .skipped)   // archived
+        #expect(statusByRepo["example-org/infra-tools"] == .skipped)    // stale search hit
+        #expect(statusByRepo["example-org/flaky-service"] == .failed)
+        #expect(statusByRepo["example-org/docs-site"] == nil)           // never a candidate
 
-        let match = outcome.results.first { $0.id == "geome/api-service" }
+        let match = outcome.results.first { $0.id == "example-org/api-service" }
         #expect(match?.evidence.first?.path == "project.json")
         #expect(match?.evidence.first?.explanation?.contains("type") == true)
 
-        let skipReason = outcome.results.first { $0.id == "geome/web-frontend" }?.reason
+        let skipReason = outcome.results.first { $0.id == "example-org/web-frontend" }?.reason
         #expect(skipReason?.contains("differs") == true)
 
         // Audit trail covers the effectful host calls, including the failed
@@ -48,7 +48,7 @@ struct GoldenRecipeTests {
         #expect(outcome.auditEvents.contains { $0.kind == "gh.searchCode" })
         let fetches = outcome.auditEvents.filter { $0.kind == "gh.getContent" }
         #expect(fetches.count == 5)
-        #expect(fetches.contains { $0.repo == "geome/flaky-service" && $0.detail.contains("failed") })
+        #expect(fetches.contains { $0.repo == "example-org/flaky-service" && $0.detail.contains("failed") })
         #expect(outcome.auditEvents.filter { $0.kind == "job.reportMatch" }.count == 2)
     }
 
@@ -65,13 +65,13 @@ struct GoldenRecipeTests {
                                                phase: validated.meta.phase,
                                                params: params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
 
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
-        #expect(statusByRepo["geome/web-frontend"] == .verifiedMatch)
-        #expect(statusByRepo["geome/api-service"] == .skipped)
+        #expect(statusByRepo["example-org/web-frontend"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/api-service"] == .skipped)
     }
 }
 
@@ -95,19 +95,19 @@ struct ReadmeLicenseRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
         #expect(outcome.status == .completed)
 
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
-        #expect(statusByRepo["geome/web-frontend"] == .verifiedMatch)
-        #expect(statusByRepo["geome/data-pipeline"] == .verifiedMatch)
-        #expect(statusByRepo["geome/docs-site"] == .verifiedMatch)
-        #expect(statusByRepo["geome/api-service"] == .skipped)      // already has the section
-        #expect(statusByRepo["geome/legacy-batch"] == .skipped)     // archived
-        #expect(statusByRepo["geome/infra-tools"] == .skipped)      // no README
-        #expect(statusByRepo["geome/flaky-service"] == .failed)
+        #expect(statusByRepo["example-org/web-frontend"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/data-pipeline"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/docs-site"] == .verifiedMatch)
+        #expect(statusByRepo["example-org/api-service"] == .skipped)      // already has the section
+        #expect(statusByRepo["example-org/legacy-batch"] == .skipped)     // archived
+        #expect(statusByRepo["example-org/infra-tools"] == .skipped)      // no README
+        #expect(statusByRepo["example-org/flaky-service"] == .failed)
 
         // Matches carry forward for the update recipe (JSON-encoded, with
         // escaped slashes — assert on the repo names).
@@ -126,20 +126,20 @@ struct ReadmeLicenseRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
         #expect(outcome.status == .completed)
 
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
-        #expect(statusByRepo["geome/web-frontend"] == .planned)
-        #expect(statusByRepo["geome/data-pipeline"] == .planned)
-        #expect(statusByRepo["geome/docs-site"] == .planned)
-        #expect(statusByRepo["geome/api-service"] == .skipped)
-        #expect(statusByRepo["geome/legacy-batch"] == .skipped)
-        #expect(statusByRepo["geome/flaky-service"] == .failed)
+        #expect(statusByRepo["example-org/web-frontend"] == .planned)
+        #expect(statusByRepo["example-org/data-pipeline"] == .planned)
+        #expect(statusByRepo["example-org/docs-site"] == .planned)
+        #expect(statusByRepo["example-org/api-service"] == .skipped)
+        #expect(statusByRepo["example-org/legacy-batch"] == .skipped)
+        #expect(statusByRepo["example-org/flaky-service"] == .failed)
 
-        let docsActions = try #require(outcome.plannedActions["geome/docs-site"])
+        let docsActions = try #require(outcome.plannedActions["example-org/docs-site"])
         #expect(docsActions.count == 3)
         guard case .createBranch(let branch, _) = docsActions[0] else {
             Issue.record("expected createBranch first"); return
@@ -162,14 +162,14 @@ struct ReadmeLicenseRecipeTests {
     func mockRouting() async throws {
         let check = try await MockLLMClient().makeScript(
             prompt: "find repos where the file README.md does not contain \"# License\"",
-            context: ScriptGenerationContext(organisation: "geome"))
+            context: ScriptGenerationContext(organisation: "example-org"))
         #expect(check.contains("path: \"README.md\""))
         #expect(check.contains("marker: \"# License\""))
         #expect(ValidationPipeline.sniffPhase(from: check) == .check)
 
         let update = try await MockLLMClient().makeScript(
             prompt: "add a '# License' section with 'TBD' to README.md",
-            context: ScriptGenerationContext(organisation: "geome", phase: .update))
+            context: ScriptGenerationContext(organisation: "example-org", phase: .update))
         #expect(update.contains("heading: \"# License\""))
         #expect(update.contains("body: \"TBD\""))
         #expect(update.contains("path: \"README.md\""))
@@ -177,25 +177,25 @@ struct ReadmeLicenseRecipeTests {
     }
 }
 
-/// The keypair worked example (plan v2 → update phases): the check half,
+/// The deploy-key worked example (plan v2 → update phases): the check half,
 /// driven from the user's natural-language prompt through the mock LLM, the
 /// validation pipeline, and the engine.
-@Suite("Keypair recipe end-to-end")
-struct KeypairRecipeTests {
+@Suite("Deploy-key recipe end-to-end")
+struct DeployKeyRecipeTests {
 
-    static let prompt = "repos where a file in deploy/ contains the string `ec2-shell-prod-eu-west-1-keypair-1`"
+    static let prompt = "repos where a file in deploy/ contains the string `legacy-deploy-key-2019`"
 
     @Test("prompt routes through the mock to a validated string-scan script")
     func promptToScript() async throws {
         let script = try await MockLLMClient().makeScript(
             prompt: Self.prompt,
-            context: ScriptGenerationContext(organisation: "geome"))
-        #expect(script.contains("needle: \"ec2-shell-prod-eu-west-1-keypair-1\""))
+            context: ScriptGenerationContext(organisation: "example-org"))
+        #expect(script.contains("needle: \"legacy-deploy-key-2019\""))
         #expect(script.contains("glob: \"deploy/**\""))
 
         let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
         let validated = try pipeline.validate(source: script)
-        #expect(validated.meta.params["needle"] == "ec2-shell-prod-eu-west-1-keypair-1")
+        #expect(validated.meta.params["needle"] == "legacy-deploy-key-2019")
         #expect(validated.meta.params["glob"] == "deploy/**")
     }
 
@@ -210,7 +210,7 @@ struct KeypairRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
 
         #expect(outcome.status == .completed)
@@ -219,19 +219,19 @@ struct KeypairRecipeTests {
         for result in outcome.results { byRepo[result.id] = result }
 
         // YAML occurrence
-        #expect(byRepo["geome/data-pipeline"]?.status == .verifiedMatch)
-        #expect(byRepo["geome/data-pipeline"]?.evidence.first?.path == "deploy/keys.yml")
+        #expect(byRepo["example-org/data-pipeline"]?.status == .verifiedMatch)
+        #expect(byRepo["example-org/data-pipeline"]?.evidence.first?.path == "deploy/keys.yml")
         // JSON occurrence, key-value pair last in its object (the future
         // trailing-comma deletion case)
-        #expect(byRepo["geome/web-frontend"]?.status == .verifiedMatch)
-        #expect(byRepo["geome/web-frontend"]?.evidence.first?.path == "deploy/infra.json")
-        #expect(byRepo["geome/web-frontend"]?.evidence.first?.explanation?.contains("keyPair") == true)
+        #expect(byRepo["example-org/web-frontend"]?.status == .verifiedMatch)
+        #expect(byRepo["example-org/web-frontend"]?.evidence.first?.path == "deploy/infra.json")
+        #expect(byRepo["example-org/web-frontend"]?.evidence.first?.explanation?.contains("deployKey") == true)
 
-        #expect(byRepo["geome/api-service"]?.status == .skipped)       // deploy files, no needle
-        #expect(byRepo["geome/legacy-batch"]?.status == .skipped)      // archived
-        #expect(byRepo["geome/infra-tools"]?.status == .skipped)       // nothing matches the glob
-        #expect(byRepo["geome/docs-site"]?.status == .skipped)         // nothing matches the glob
-        #expect(byRepo["geome/flaky-service"]?.status == .failed)
+        #expect(byRepo["example-org/api-service"]?.status == .skipped)       // deploy files, no needle
+        #expect(byRepo["example-org/legacy-batch"]?.status == .skipped)      // archived
+        #expect(byRepo["example-org/infra-tools"]?.status == .skipped)       // nothing matches the glob
+        #expect(byRepo["example-org/docs-site"]?.status == .skipped)         // nothing matches the glob
+        #expect(byRepo["example-org/flaky-service"]?.status == .failed)
 
         // All seven repos enumerated; every one reached a terminal status.
         #expect(outcome.results.count == 7)
@@ -250,14 +250,14 @@ struct SupportTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         var settings = AppSettings()
-        settings.organisation = "geome"
+        settings.organisation = "example-org"
         settings.maxConcurrentOps = 3
         var job = Job(prompt: "find things")
         job.scriptSource = "async function main() {}"
         job.params = ["path": "x.yml"]
-        job.results = [RepoResult(repo: RepoRef(fullName: "geome/a"), status: .verifiedMatch,
+        job.results = [RepoResult(repo: RepoRef(fullName: "example-org/a"), status: .verifiedMatch,
                                   reason: "ok", evidence: [Evidence(path: "x.yml", excerpt: "k: v")])]
-        job.auditEvents = [AuditEvent(kind: "gh.getContent", repo: "geome/a", detail: "x.yml")]
+        job.auditEvents = [AuditEvent(kind: "gh.getContent", repo: "example-org/a", detail: "x.yml")]
 
         try store.save(AppStateSnapshot(settings: settings, job: job))
         let loaded = try #require(store.load())
@@ -306,7 +306,7 @@ struct SupportTests {
         """
         let script = try await client.makeScript(
             prompt: prompt,
-            context: ScriptGenerationContext(organisation: "geome"))
+            context: ScriptGenerationContext(organisation: "example-org"))
         #expect(script.contains("path: \"config/settings.yaml\""))
         #expect(script.contains("key: \"region\""))
         #expect(script.contains("value: \"us-east-1\""))
@@ -358,22 +358,22 @@ struct CatalogRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
         #expect(outcome.status == .completed)
 
         var byRepo: [String: RepoResult] = [:]
         for result in outcome.results { byRepo[result.id] = result }
 
-        #expect(byRepo["geome/api-service"]?.status == .verifiedMatch)
-        #expect(byRepo["geome/api-service"]?.evidence.first?.path == "deploy/logging.yml")
-        #expect(byRepo["geome/web-frontend"]?.status == .skipped)        // 30, differs
-        #expect(byRepo["geome/web-frontend"]?.reason?.contains("differs") == true)
-        #expect(byRepo["geome/data-pipeline"]?.status == .skipped)       // key absent
-        #expect(byRepo["geome/legacy-batch"]?.status == .skipped)        // archived
-        #expect(byRepo["geome/infra-tools"]?.status == .skipped)         // no files
-        #expect(byRepo["geome/docs-site"]?.status == .skipped)           // no deploy/
-        #expect(byRepo["geome/flaky-service"]?.status == .failed)
+        #expect(byRepo["example-org/api-service"]?.status == .verifiedMatch)
+        #expect(byRepo["example-org/api-service"]?.evidence.first?.path == "deploy/logging.yml")
+        #expect(byRepo["example-org/web-frontend"]?.status == .skipped)        // 30, differs
+        #expect(byRepo["example-org/web-frontend"]?.reason?.contains("differs") == true)
+        #expect(byRepo["example-org/data-pipeline"]?.status == .skipped)       // key absent
+        #expect(byRepo["example-org/legacy-batch"]?.status == .skipped)        // archived
+        #expect(byRepo["example-org/infra-tools"]?.status == .skipped)         // no files
+        #expect(byRepo["example-org/docs-site"]?.status == .skipped)           // no deploy/
+        #expect(byRepo["example-org/flaky-service"]?.status == .failed)
     }
 
     @Test("marker deletion dry run plans the marked blocks, inclusive")
@@ -387,19 +387,19 @@ struct CatalogRecipeTests {
                                                phase: validated.meta.phase,
                                                params: validated.meta.params,
                                                github: FixtureGitHubClient.demo(),
-                                               organisation: "geome",
+                                               organisation: "example-org",
                                                onEvent: { _ in })
         #expect(outcome.status == .completed)
 
         var statusByRepo: [String: RepoStatus] = [:]
         for result in outcome.results { statusByRepo[result.id] = result.status }
-        #expect(statusByRepo["geome/api-service"] == .planned)
-        #expect(statusByRepo["geome/web-frontend"] == .planned)
-        #expect(statusByRepo["geome/data-pipeline"] == .skipped)   // no marked blocks
-        #expect(statusByRepo["geome/legacy-batch"] == .skipped)    // archived
-        #expect(statusByRepo["geome/flaky-service"] == .failed)
+        #expect(statusByRepo["example-org/api-service"] == .planned)
+        #expect(statusByRepo["example-org/web-frontend"] == .planned)
+        #expect(statusByRepo["example-org/data-pipeline"] == .skipped)   // no marked blocks
+        #expect(statusByRepo["example-org/legacy-batch"] == .skipped)    // archived
+        #expect(statusByRepo["example-org/flaky-service"] == .failed)
 
-        let apiActions = try #require(outcome.plannedActions["geome/api-service"])
+        let apiActions = try #require(outcome.plannedActions["example-org/api-service"])
         #expect(apiActions.count == 3)
         guard case .createBranch(let branch, _) = apiActions[0] else {
             Issue.record("expected createBranch first"); return
@@ -418,7 +418,7 @@ struct CatalogRecipeTests {
         }
         #expect(title == "Delete marked block")
 
-        let webEdits = try #require(outcome.plannedActions["geome/web-frontend"])
+        let webEdits = try #require(outcome.plannedActions["example-org/web-frontend"])
             .compactMap { action -> String? in
                 guard case .putContent(_, _, _, _, let after) = action else { return nil }
                 return after
@@ -430,14 +430,14 @@ struct CatalogRecipeTests {
     func mockRouting() async throws {
         let yaml = try await MockLLMClient().makeScript(
             prompt: "find repos that contain \"project.json\" where the \"type\" value is \"rails\"",
-            context: ScriptGenerationContext(organisation: "geome"))
+            context: ScriptGenerationContext(organisation: "example-org"))
         #expect(yaml.contains("path: \"project.json\""))
         #expect(yaml.contains("key: \"type\""))
         #expect(yaml.contains("value: \"rails\""))
 
         let glob = try await MockLLMClient().makeScript(
             prompt: "repos where a yaml file in deploy/** has a key \"RetentionInDays\" with a value \"14\"",
-            context: ScriptGenerationContext(organisation: "geome"))
+            context: ScriptGenerationContext(organisation: "example-org"))
         #expect(glob.contains("glob: \"deploy/**\""))
         #expect(glob.contains("key: \"RetentionInDays\""))
         #expect(glob.contains("value: \"14\""))
@@ -445,7 +445,7 @@ struct CatalogRecipeTests {
 
         let marker = try await MockLLMClient().makeScript(
             prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\"",
-            context: ScriptGenerationContext(organisation: "geome", phase: .update))
+            context: ScriptGenerationContext(organisation: "example-org", phase: .update))
         #expect(marker.contains("startMarker: \"# >>>\""))
         #expect(marker.contains("endMarker: \"# <<<\""))
         #expect(ValidationPipeline.sniffPhase(from: marker) == .update)

@@ -299,13 +299,13 @@ extension FixtureGitHubClient {
     /// value mismatch, an archived repo, a stale search hit whose file is gone,
     /// and a repo where content fetch fails.
     public static func demo() -> FixtureGitHubClient {
-        let api = RepoRef(fullName: "geome/api-service")
-        let web = RepoRef(fullName: "geome/web-frontend")
-        let pipeline = RepoRef(fullName: "geome/data-pipeline", defaultBranch: "master")
-        let legacy = RepoRef(fullName: "geome/legacy-batch", archived: true)
-        let infra = RepoRef(fullName: "geome/infra-tools")
-        let flaky = RepoRef(fullName: "geome/flaky-service")
-        let docs = RepoRef(fullName: "geome/docs-site", isPrivate: false)
+        let api = RepoRef(fullName: "example-org/api-service")
+        let web = RepoRef(fullName: "example-org/web-frontend")
+        let pipeline = RepoRef(fullName: "example-org/data-pipeline", defaultBranch: "master")
+        let legacy = RepoRef(fullName: "example-org/legacy-batch", archived: true)
+        let infra = RepoRef(fullName: "example-org/infra-tools")
+        let flaky = RepoRef(fullName: "example-org/flaky-service")
+        let docs = RepoRef(fullName: "example-org/docs-site", isPrivate: false)
 
         let matchingYAML = """
         # production deployment
@@ -320,21 +320,21 @@ extension FixtureGitHubClient {
         stack: production
         """
 
-        // The keypair worked example (plan v2): the string to find — and
+        // The deploy-key worked example (plan v2): the string to find — and
         // delete line-wise — appears once in YAML and once in JSON with the
         // key-value pair LAST in its object, so the deletion must also strip
         // the trailing comma on the line above.
-        let keypairYAML = """
+        let deployKeyYAML = """
         region: eu-west-1
-        keyPair: ec2-shell-prod-eu-west-1-keypair-1
+        deployKey: legacy-deploy-key-2019
         instanceType: m5.large
         """
 
-        let keypairJSON = """
+        let deployKeyJSON = """
         {
           "stack": "web-frontend",
           "region": "eu-west-1",
-          "keyPair": "ec2-shell-prod-eu-west-1-keypair-1"
+          "deployKey": "legacy-deploy-key-2019"
         }
         """
 
@@ -406,13 +406,13 @@ extension FixtureGitHubClient {
                                "deploy/logging.yml": retention14,
                                "deploy/cron.yml": markedCron],
                 web.fullName: ["deploy/prod.yml": differingYAML,
-                               "deploy/infra.json": keypairJSON,
+                               "deploy/infra.json": deployKeyJSON,
                                "README.md": "# web-frontend\n\nCustomer-facing frontend.\n",
                                "project.json": reactProject,
                                "deploy/logging.yml": retention30,
                                "deploy/maintenance.yml": markedMaintenance],
                 pipeline.fullName: ["deploy/prod.yml": matchingYAML,
-                                    "deploy/keys.yml": keypairYAML,
+                                    "deploy/keys.yml": deployKeyYAML,
                                     "README.md": "# data-pipeline\n",
                                     "project.json": railsProject],
                 legacy.fullName: ["deploy/prod.yml": matchingYAML,
