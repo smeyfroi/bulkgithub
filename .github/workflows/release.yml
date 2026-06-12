@@ -21,9 +21,6 @@ jobs:
       - name: Test
         run: swift test
 
-      - name: Generate icon
-        run: swift Scripts/generate_icon.swift
-
       - name: Build app bundle
         run: VERSION="${GITHUB_REF_NAME#v}" ./Scripts/make_app.sh release
 
