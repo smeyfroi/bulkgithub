@@ -10,9 +10,6 @@ struct MainView: View {
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
         VStack(spacing: 0) {
-            // The workflow's spine: Find → Update → Merge as a full-width
-            // flow above the panes, not rows buried in the sidebar list.
-            PhaseFlowBar()
             // Deterministic three-pane tiling via HSplitView, NOT
             // NavigationSplitView: on macOS 26 the navigation sidebars are
             // glass panels floating over a full-width content layer, and the
@@ -60,6 +57,10 @@ struct MainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("BulkGitHub")
             .toolbar {
+                // The workflow's spine, centred in the title bar.
+                ToolbarItem(placement: .principal) {
+                    PhaseFlowControl()
+                }
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         Task { await model.validate() }
@@ -278,13 +279,13 @@ struct ApplySheet: View {
     }
 }
 
-/// The Find → Update → Merge pipeline as a flow bar: every stage visible
-/// with its product count, the current one highlighted, arrows carrying the
-/// direction. Colour is the secondary cue (labels and symbols carry the
-/// meaning, per the HIG): Find blue, Update purple in dry run and red the
-/// moment writes are armed, Merge green — extending the app's existing
-/// dry-run/armed colour language.
-struct PhaseFlowBar: View {
+/// The workflow's spine in the title bar: Find ▸ Update ▸ Merge at standard
+/// toolbar metrics. Chevron separators carry the direction (the
+/// path-control idiom); only the ACTIVE stage wears a tinted capsule — bold
+/// colour belongs in content, not chrome. Tints extend the app's existing
+/// language: Find blue, Update purple in dry run and red the moment writes
+/// are armed, Merge green. Each stage carries its product count.
+struct PhaseFlowControl: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -292,30 +293,25 @@ struct PhaseFlowBar: View {
         // swapping workspaces mid-action invites confusion (the run keeps
         // writing into the phase it started in).
         let busy = model.running || model.generating
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             stage(.check, label: "Find", systemImage: "magnifyingglass",
                   badge: model.matchedCount,
-                  help: "Prompts generate read-only search scripts; matches feed Update")
-            arrow
+                  help: "Prompts generate read-only search scripts; matches feed Update (⌘1)")
+            chevron
             stage(.update, label: "Update", systemImage: "pencil",
                   badge: model.plannedRepoCount,
-                  help: "Update scripts dry-run into a reviewable plan; arm writes via Apply")
-            arrow
+                  help: "Update scripts dry-run into a reviewable plan; arm writes via Apply (⌘2)")
+            chevron
             stage(.merge, label: "Merge", systemImage: "arrow.triangle.merge",
                   badge: model.registryPRCount,
-                  help: "Approve job PRs, then merge scripts act on this job's artifacts only")
-            Spacer()
+                  help: "Approve job PRs, then merge scripts act on this job's artifacts only (⌘3)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.25))
-        .overlay(alignment: .bottom) { Divider() }
         .disabled(busy)
     }
 
-    private var arrow: some View {
-        Image(systemName: "arrow.right")
-            .font(.caption.weight(.semibold))
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.semibold))
             .foregroundStyle(.tertiary)
     }
 
@@ -334,27 +330,27 @@ struct PhaseFlowBar: View {
         return Button {
             model.setPhase(phase)
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.callout)
+                    .font(.subheadline)
                 Text(label)
-                    .font(.callout.weight(isCurrent ? .semibold : .regular))
+                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
                 if badge > 0 {
                     Text("\(badge)")
                         .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(tint.opacity(0.18), in: Capsule())
-                        .foregroundStyle(tint)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background((isCurrent ? tint : Color.secondary).opacity(0.16),
+                                    in: Capsule())
+                        .foregroundStyle(isCurrent ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
             .background(isCurrent ? AnyShapeStyle(tint.opacity(0.16)) : AnyShapeStyle(.clear),
                         in: Capsule())
             .overlay(
-                Capsule().strokeBorder(isCurrent ? tint.opacity(0.7) : Color.secondary.opacity(0.25),
-                                       lineWidth: isCurrent ? 1.5 : 1)
+                Capsule().strokeBorder(tint.opacity(isCurrent ? 0.6 : 0), lineWidth: 1)
             )
             .foregroundStyle(isCurrent ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
         }
