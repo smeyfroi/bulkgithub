@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Test
         run: swift test
@@ -47,7 +47,7 @@ jobs:
         run: ditto -c -k --keepParent dist/BulkGitHub.app dist/BulkGitHub.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BulkGitHub
           path: dist/BulkGitHub.zip
