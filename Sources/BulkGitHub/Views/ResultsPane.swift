@@ -89,7 +89,7 @@ struct ResultsPane: View {
                             .help("No merge run yet")
                     }
                 }
-                .width(min: 80, ideal: 95, max: 130)
+                .width(min: 96, ideal: 100, max: 130)
 
                 TableColumn("Repository") { (row: AppModel.MergeRow) in
                     RepoCell(repo: row.repo)
@@ -120,7 +120,7 @@ struct ResultsPane: View {
             TableColumn("Status") { (result: RepoResult) in
                 StatusBadge(status: result.status)
             }
-            .width(min: 80, ideal: 95, max: 130)
+            .width(min: 96, ideal: 100, max: 130)
 
             TableColumn("Repository") { (result: RepoResult) in
                 RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
@@ -155,7 +155,7 @@ struct ResultsPane: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .width(min: 80, ideal: 95, max: 130)
+            .width(min: 96, ideal: 100, max: 130)
 
             TableColumn("Update") { (row: AppModel.UpdateRow) in
                 if let update = row.update {
@@ -166,7 +166,7 @@ struct ResultsPane: View {
                         .help("No update run yet for this repo")
                 }
             }
-            .width(min: 80, ideal: 95, max: 130)
+            .width(min: 96, ideal: 100, max: 130)
 
             TableColumn("Repository") { (row: AppModel.UpdateRow) in
                 RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)

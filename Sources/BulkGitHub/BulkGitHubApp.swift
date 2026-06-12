@@ -65,6 +65,16 @@ struct BulkGitHubApp: App {
                     .disabled(model.running || model.generating)
                 Divider()
             }
+            #if DEBUG
+            // Documentation screenshots: renders the app's own window — no
+            // screen-recording permission involved.
+            CommandMenu("Debug") {
+                Button("Save Window Snapshot") { WindowSnapshotter.save() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Resize Window for Screenshots") { WindowSnapshotter.resizeForScreenshots() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+            #endif
         }
 
         Settings {

@@ -25,7 +25,9 @@ struct MainView: View {
             // ideal size and centering.
             HSplitView {
                 SidebarView()
-                    .frame(minWidth: 170, idealWidth: 210, maxWidth: 300,
+                    // The catalog's titles outgrew the original 210 ideal —
+                    // give the library room to read at its default width.
+                    .frame(minWidth: 170, idealWidth: 235, maxWidth: 300,
                            maxHeight: .infinity)
                 // Split views measure children with unspecified proposals, so
                 // a child with a wide ideal (the code editor's longest line)
@@ -306,6 +308,10 @@ struct PhaseFlowControl: View {
                   badge: model.registryPRCount,
                   help: "Approve job PRs, then merge scripts act on this job's artifacts only (⌘3)")
         }
+        // The principal toolbar slot compresses its item once the badges
+        // appear, truncating the active stage's label — refuse compression;
+        // the title bar has the room.
+        .fixedSize()
         .disabled(busy)
     }
 

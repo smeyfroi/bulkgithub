@@ -14,19 +14,19 @@ read-only handle — the write surface does not exist on it).
 **1 — Find** (read-only): describe what to find, review the generated script,
 run it; matches are verified deterministically and shown in situ.
 
-![Find phase: prompt, generated script, per-repo results, and verified evidence in situ](screenshot-check.jpeg)
+![Find phase: prompt, generated script, per-repo results, and verified evidence in situ](screenshot-check.png)
 
 **2 — Update** (dry run by default): the find results carry into the funnel;
 the dry run records a reviewable plan with native diffs. The Dry Run | Write
 toggle arms real writes only after you've reviewed the plan.
 
-![Update phase: the find → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.jpeg)
+![Update phase: the find → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.png)
 
 **3 — Merge** (registry-scoped): approve the PRs the job created — each
 approval pins the head SHA — then a merge script squash-merges them and
 cleans up the branches. It can only touch this job's artifacts.
 
-![Merge phase: the approval queue over the job's PRs, with per-PR diffs and the merge plan](screenshot-merge.jpeg)
+![Merge phase: the approval queue over the job's PRs, with per-PR diffs and the merge plan](screenshot-merge.png)
 
 - Architecture and roadmap: [plans/native-macos-bulkgithub-app-plan-v2.md](plans/native-macos-bulkgithub-app-plan-v2.md)
 - Runtime decision record: [decisions/0001-javascriptcore-as-embedded-script-runtime.md](decisions/0001-javascriptcore-as-embedded-script-runtime.md)

@@ -10,6 +10,7 @@
 		02BBE19D9FF7E4EB5F65E51C /* ResultsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C2A201574561400FC7F7D2 /* ResultsPane.swift */; };
 		1C258BEF93F13C53F0E3DAD4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAA882FD94C5E3D02E1CE399 /* SettingsView.swift */; };
 		3CDCE6BC65B57A351DB2211B /* BulkGitHubKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6F99D1AFFC6C3F1AB7F15772 /* BulkGitHubKit */; };
+		521216771F18543243C64660 /* WindowSnapshotter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44F6CB2D0B78243475057F5 /* WindowSnapshotter.swift */; };
 		542EFD1FF2195A701105B835 /* ScriptPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296729E8EA1172009D28588 /* ScriptPane.swift */; };
 		649F9DE327A4082A3EAC1BC8 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE12C853F496916CB6381059 /* MainView.swift */; };
 		976BA8FF997478BDD1763FEB /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 594A31D0CE0E1672EE7EFDA0 /* CodeEditor */; };
@@ -36,6 +37,7 @@
 		BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BulkGitHubApp.swift; sourceTree = "<group>"; };
 		D4B92C6F3817188AAB2E0727 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		DAA882FD94C5E3D02E1CE399 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F44F6CB2D0B78243475057F5 /* WindowSnapshotter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSnapshotter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +127,7 @@
 				2C60DBDC4D8462B7A34B4DD5 /* AppModel.swift */,
 				4FA31B7DFFC4C88194D31523 /* Assets.xcassets */,
 				BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */,
+				F44F6CB2D0B78243475057F5 /* WindowSnapshotter.swift */,
 			);
 			path = BulkGitHub;
 			sourceTree = "<group>";
@@ -213,6 +216,7 @@
 				02BBE19D9FF7E4EB5F65E51C /* ResultsPane.swift in Sources */,
 				542EFD1FF2195A701105B835 /* ScriptPane.swift in Sources */,
 				1C258BEF93F13C53F0E3DAD4 /* SettingsView.swift in Sources */,
+				521216771F18543243C64660 /* WindowSnapshotter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
