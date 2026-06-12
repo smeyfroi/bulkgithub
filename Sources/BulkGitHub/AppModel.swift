@@ -415,9 +415,12 @@ final class AppModel {
     }
 
     /// Discard the entire job — all three phase workspaces, results, plans,
-    /// logs, the audit trail, and carried job state — and start over exactly
-    /// like a first launch (golden recipe loaded). Settings and credentials
-    /// survive. Reached only via requestNewJob's confirmation.
+    /// logs, the audit trail, and carried job state — leaving an empty
+    /// workspace. (First launch loads the golden recipe for discoverability;
+    /// New Job deliberately does not — the library is one click away, and a
+    /// "new" workspace with a pre-filled script reads as "didn't clear".)
+    /// Settings and credentials survive. Reached only via requestNewJob's
+    /// confirmation.
     func startNewJob() {
         guard !running, !generating, artifacts.isEmpty else { return }
         phase = .check
@@ -446,8 +449,7 @@ final class AppModel {
         selectedRepo = nil
         writeArmed = false
         quotaText = nil
-        loadGoldenRecipe()
-        statusLine = "New job — fresh workspace (settings kept)"
+        statusLine = "New job — describe what to find, or load a recipe"
         saveNow()
     }
 
