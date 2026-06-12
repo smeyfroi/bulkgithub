@@ -20,7 +20,10 @@ struct BulkGitHubApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("BulkGitHub") {
+        // Window, not WindowGroup: a single-workspace app. WindowGroup let
+        // the system offer "New BulkGitHub Window" — a second live mirror of
+        // the same job, useless here and confusing next to File > New Job.
+        Window("BulkGitHub", id: "main") {
             MainView()
                 .environment(model)
                 // Wide enough for all three column minimums plus chrome, so
@@ -40,6 +43,13 @@ struct BulkGitHubApp: App {
                 Button("New Job…") { model.requestNewJob() }
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(model.running || model.generating || model.validating)
+            }
+            // The app has no document save; ⌘S captures the workspace into
+            // the recipe library instead.
+            CommandGroup(replacing: .saveItem) {
+                Button("Save Script as Recipe…") { model.requestSaveRecipe() }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(model.running || model.generating || model.scriptText.isEmpty)
             }
         }
 

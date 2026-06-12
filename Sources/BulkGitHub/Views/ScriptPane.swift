@@ -156,24 +156,52 @@ struct WriteModeBanner: View {
 /// Editable parameters surfaced from the script's meta.params — tweak a job
 /// without re-prompting or editing code. A wrapping grid of labelled fields:
 /// nothing crops off-screen, however many params a script declares.
+///
+/// The mechanism is stated in the header (these are runtime inputs the
+/// script reads as job.params; the source keeps its declared defaults), and
+/// an edited value is visibly marked, with the script's own default a click
+/// away — so "does editing this do anything?" never needs guessing.
 struct ParamsBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Script parameters", systemImage: "slider.horizontal.3")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("Editable values from the script's meta.params")
+            HStack(spacing: 6) {
+                Label("Script parameters", systemImage: "slider.horizontal.3")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("— passed to the script as job.params on the next run; the source keeps its declared defaults")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .help("The script declares names and defaults in meta.params and reads the effective values from job.params at run time. Edits here apply to the next run without changing the script source — changed values are marked and can be reset to the script's default.")
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 380),
                                          spacing: 8, alignment: .topLeading)],
                       alignment: .leading, spacing: 8) {
                 ForEach(model.visibleParamKeys, id: \.self) { key in
+                    let edited = isEdited(key)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(key)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Text(key)
+                                .font(.caption2)
+                                .foregroundStyle(edited ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                                .fontWeight(edited ? .semibold : .regular)
+                            if edited {
+                                Text("edited")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                Button {
+                                    model.paramsDraft[key] = model.declaredDefault(for: key)
+                                } label: {
+                                    Image(systemName: "arrow.uturn.backward.circle")
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Reset to the script's default: \(model.declaredDefault(for: key) ?? "")")
+                            }
+                        }
                         TextField(key, text: binding(for: key))
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.caption, design: .monospaced))
@@ -184,6 +212,13 @@ struct ParamsBar: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Edited = differs from the script's declared default. Unknown defaults
+    /// (script not validated since it changed) are never marked.
+    private func isEdited(_ key: String) -> Bool {
+        guard let declared = model.declaredDefault(for: key) else { return false }
+        return (model.paramsDraft[key] ?? "") != declared
     }
 
     private func binding(for key: String) -> Binding<String> {

@@ -161,6 +161,12 @@ public struct Job: Codable, Identifiable, Sendable {
     /// The script source each phase's results were produced by, for staleness
     /// detection after the script is regenerated or edited.
     public var ranScriptByPhase: [String: String]?
+    /// The effective params each phase's results were produced with — param
+    /// edits stale results just like source edits.
+    public var ranParamsByPhase: [String: [String: String]]?
+    /// The meta.params defaults captured at validation, so the params bar
+    /// can mark edited values across relaunches.
+    public var declaredParamsByPhase: [String: [String: String]]?
     /// Each phase is a separate workspace: its own script and params, like
     /// promptsByPhase. `scriptSource`/`params` remain the legacy single slots.
     public var scriptsByPhase: [String: String]?

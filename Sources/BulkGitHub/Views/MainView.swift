@@ -130,9 +130,45 @@ struct MainView: View {
         } message: {
             Text("Starting a new job would abandon what this job created on the remote — the artifact registry is the only authority that can merge or cancel it. Merge the approved PRs or run the \"Cancel job\" recipe first.")
         }
+        .alert("Save script as recipe", isPresented: $model.showSaveRecipePrompt) {
+            TextField("Recipe name", text: $model.recipeNameDraft)
+            Button("Save") { model.saveCurrentAsRecipe() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Saves the prompt, script, and phase to your recipe library (Application Support). Results and plans are not part of a recipe.")
+        }
+        .alert("Rename recipe", isPresented: renamingPresented, presenting: model.renamingRecipe) { recipe in
+            TextField("Recipe name", text: $model.recipeNameDraft)
+            Button("Rename") { model.renameRecipe(recipe) }
+            Button("Cancel", role: .cancel) {}
+        } message: { recipe in
+            Text("Rename \"\(recipe.title)\".")
+        }
+        .alert("Delete recipe?", isPresented: deletingPresented, presenting: model.deletingRecipe) { recipe in
+            Button("Delete \"\(recipe.title)\"", role: .destructive) {
+                model.deleteRecipe(recipe)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { recipe in
+            Text("\"\(recipe.title)\" is removed from your library. Scripts in the editor are not affected.")
+        }
         .onChange(of: model.settings.useFixtureGitHub) {
             model.dataSourceChanged()
         }
+    }
+
+    private var renamingPresented: Binding<Bool> {
+        Binding(
+            get: { model.renamingRecipe != nil },
+            set: { if !$0 { model.renamingRecipe = nil } }
+        )
+    }
+
+    private var deletingPresented: Binding<Bool> {
+        Binding(
+            get: { model.deletingRecipe != nil },
+            set: { if !$0 { model.deletingRecipe = nil } }
+        )
     }
 
     private var buttonTitle: String {
@@ -263,6 +299,34 @@ struct SidebarView: View {
                     .tag(JobPhase.merge)
                     .help("Approve job PRs, then merge scripts act on this job's artifacts only")
                     .selectionDisabled(busy)
+            }
+
+            // The user's own recipes, saved from the workspace (File > Save
+            // Script as Recipe…). Hidden until the first save.
+            if !model.userRecipes.isEmpty {
+                Section("Saved recipes") {
+                    ForEach(model.userRecipes) { recipe in
+                        Button {
+                            model.loadRecipe(recipe.asRecipe)
+                        } label: {
+                            Label(recipe.title, systemImage: "bookmark")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                        .selectionDisabled()
+                        .help("\(recipe.phase.rawValue) — \(recipe.prompt)")
+                        .contextMenu {
+                            Button("Rename…") {
+                                model.recipeNameDraft = recipe.title
+                                model.renamingRecipe = recipe
+                            }
+                            Button("Delete…", role: .destructive) {
+                                model.deletingRecipe = recipe
+                            }
+                        }
+                    }
+                }
             }
 
             // The recipe LIBRARY is reference material, not navigation: it

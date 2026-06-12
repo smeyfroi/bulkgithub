@@ -164,6 +164,36 @@ struct SupportTests {
         #expect(loaded.job?.auditEvents.count == 1)
     }
 
+    @Test("user recipes save, rename, and delete through the store")
+    func userRecipes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulkgh-recipes-\(UUID().uuidString)")
+        let store = UserRecipeStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let recipe = UserRecipe(title: "Find stale configs",
+                                prompt: "find configs that are stale",
+                                phase: .check,
+                                source: "async function main() {}")
+        try store.save(recipe)
+        var loaded = store.load()
+        #expect(loaded.map(\.id) == [recipe.id])
+        #expect(loaded.first?.asRecipe.source == "async function main() {}")
+        #expect(loaded.first?.asRecipe.phase == .check)
+
+        var renamed = recipe
+        renamed.title = "Audit configs"
+        try store.save(renamed)
+        loaded = store.load()
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.title == "Audit configs")
+
+        try store.delete(id: recipe.id)
+        #expect(store.load().isEmpty)
+        // Deleting a missing recipe is a no-op, not an error.
+        try store.delete(id: recipe.id)
+    }
+
     @Test("mock LLM patches recipe params from the prompt")
     func mockGeneration() async throws {
         let client = MockLLMClient()

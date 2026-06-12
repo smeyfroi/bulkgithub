@@ -40,6 +40,14 @@ final class AppModel {
     /// The script source that produced each phase's results, for staleness:
     /// regenerating or editing the script makes existing results stale.
     private var ranScriptByPhase: [JobPhase: String] = [:]
+    /// The effective params each phase's results were produced with —
+    /// param edits change what the script computes just like source edits,
+    /// so they trigger the same staleness.
+    private var ranParamsByPhase: [JobPhase: [String: String]] = [:]
+    /// The defaults declared in the script's meta.params (captured at
+    /// validation), so the params bar can mark edited values and offer a
+    /// reset back to the script's own default.
+    private var declaredParamsByPhase: [JobPhase: [String: String]] = [:]
     var results: [RepoResult] { resultsByPhase[phase] ?? [] }
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
@@ -112,6 +120,8 @@ final class AppModel {
                 paramsByPhase = Self.byPhase(job.paramsByPhase)
                 resultsByPhase = Self.byPhase(job.resultsByPhase)
                 ranScriptByPhase = Self.byPhase(job.ranScriptByPhase)
+                ranParamsByPhase = Self.byPhase(job.ranParamsByPhase)
+                declaredParamsByPhase = Self.byPhase(job.declaredParamsByPhase)
                 // Pre-per-phase saves: attribute the legacy single slots to
                 // the job's phase.
                 if scriptsByPhase.isEmpty { scriptsByPhase[job.phase] = job.scriptSource }
@@ -143,6 +153,7 @@ final class AppModel {
         if !restoredJob {
             loadGoldenRecipe()
         }
+        userRecipes = recipeStore.load()
     }
 
     private static func byPhase<T>(_ raw: [String: T]?) -> [JobPhase: T] {
@@ -188,15 +199,46 @@ final class AppModel {
         return nil
     }
 
-    /// The visible results were produced by a different script than the one
-    /// in the editor (regenerated or edited since the run). Suppressed while
-    /// generating or running — the script is mid-change then, so "stale" is
-    /// noise; it reappears once the new script settles unrun. Starting a run
-    /// clears the results, so the banner is gone the moment Run is pressed.
-    var resultsAreStale: Bool {
+    /// The visible results were produced by a different script — or different
+    /// params — than what's on screen now. Suppressed while generating or
+    /// running: the script is mid-change then, so "stale" is noise; it
+    /// reappears once the new script settles unrun. Starting a run clears
+    /// the results, so the banner is gone the moment Run is pressed.
+    var resultsAreStale: Bool { staleReason != nil }
+
+    /// What changed since the visible results were produced (nil = nothing).
+    var staleReason: String? {
         guard !generating, !running,
-              !results.isEmpty, let ran = ranScriptByPhase[phase] else { return false }
-        return ran != scriptText
+              !results.isEmpty, let ran = ranScriptByPhase[phase] else { return nil }
+        let scriptChanged = ran != scriptText
+        // Restored pre-0.4.5 state has no recorded params: unknown, not stale.
+        let paramsChanged = ranParamsByPhase[phase].map { $0 != effectiveParams(for: phase) } ?? false
+        switch (scriptChanged, paramsChanged) {
+        case (true, true): return "The script and its parameters have changed since these results were produced — Run to refresh."
+        case (true, false): return "The script has changed since these results were produced — Run to refresh."
+        case (false, true): return "The parameters have changed since these results were produced — Run to refresh."
+        case (false, false): return nil
+        }
+    }
+
+    /// The params a run of `runPhase` would receive right now: the editable
+    /// draft, with the explicit PR title/description fields winning where
+    /// the script declares those params. Mirrored by runInternal.
+    private func effectiveParams(for runPhase: JobPhase) -> [String: String] {
+        var params = paramsDraft
+        if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
+            params["prTitle"] = prTitle
+        }
+        if runPhase == .update, !prBody.isEmpty, params["prBody"] != nil {
+            params["prBody"] = prBody
+        }
+        return params
+    }
+
+    /// The script's own default for a param (nil when unknown — e.g. the
+    /// script hasn't been validated since it changed).
+    func declaredDefault(for key: String) -> String? {
+        declaredParamsByPhase[phase]?[key]
     }
 
     /// One row of the update table: the check verdict and the update outcome
@@ -331,6 +373,7 @@ final class AppModel {
         guard !running else { return }
         resultsByPhase = [:]
         ranScriptByPhase = [:]
+        ranParamsByPhase = [:]
         plannedActions = [:]
         plannedActionsPhase = nil
         artifacts = []
@@ -391,6 +434,8 @@ final class AppModel {
         diagnostics = []
         resultsByPhase = [:]
         ranScriptByPhase = [:]
+        ranParamsByPhase = [:]
+        declaredParamsByPhase = [:]
         logs = []
         auditEvents = []
         auditTrail = []
@@ -409,6 +454,7 @@ final class AppModel {
     func clearResults() {
         resultsByPhase[phase] = []
         ranScriptByPhase[phase] = nil
+        ranParamsByPhase[phase] = nil
         if plannedActionsPhase == phase {
             plannedActions = [:]
             plannedActionsPhase = nil
@@ -474,6 +520,66 @@ final class AppModel {
     func loadRecipe(named name: String) {
         guard let recipe = RecipeCatalog.recipe(id: name) else { return }
         loadRecipe(recipe)
+    }
+
+    // MARK: User recipes (saved from the workspace, file-backed)
+
+    @ObservationIgnored private let recipeStore = UserRecipeStore()
+    private(set) var userRecipes: [UserRecipe] = []
+
+    /// Drives the save-as-recipe name prompt; recipeNameDraft backs the
+    /// rename prompt too.
+    var showSaveRecipePrompt = false
+    var recipeNameDraft = ""
+    var renamingRecipe: UserRecipe?
+    var deletingRecipe: UserRecipe?
+
+    func requestSaveRecipe() {
+        guard !scriptText.isEmpty else {
+            statusLine = "Nothing to save — the editor is empty"
+            return
+        }
+        recipeNameDraft = ""
+        showSaveRecipePrompt = true
+    }
+
+    /// Capture the current workspace — prompt, script, phase — under the
+    /// drafted name.
+    func saveCurrentAsRecipe() {
+        let title = recipeNameDraft.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, !scriptText.isEmpty else { return }
+        do {
+            try recipeStore.save(UserRecipe(title: title, prompt: prompt,
+                                            phase: phase, source: scriptText))
+            userRecipes = recipeStore.load()
+            statusLine = "Saved recipe \"\(title)\""
+        } catch {
+            statusLine = "Could not save recipe: \(error.localizedDescription)"
+        }
+    }
+
+    func renameRecipe(_ recipe: UserRecipe) {
+        let title = recipeNameDraft.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, title != recipe.title else { return }
+        var renamed = recipe
+        renamed.title = title
+        do {
+            try recipeStore.save(renamed)
+            userRecipes = recipeStore.load()
+            statusLine = "Renamed recipe to \"\(title)\""
+        } catch {
+            statusLine = "Could not rename recipe: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteRecipe(_ recipe: UserRecipe) {
+        do {
+            try recipeStore.delete(id: recipe.id)
+            userRecipes = recipeStore.load()
+            statusLine = "Deleted recipe \"\(recipe.title)\""
+        } catch {
+            statusLine = "Could not delete recipe: \(error.localizedDescription)"
+        }
     }
 
     func loadGoldenRecipe() {
@@ -602,6 +708,7 @@ final class AppModel {
             // current buffer (no workspace swap): the script, prompt, and
             // params on screen belong to the declared phase now.
             phase = validated.meta.phase
+            declaredParamsByPhase[validated.meta.phase] = validated.meta.params
             // Two-way sync with the explicit PR title/description fields: an
             // explicit value wins; otherwise the script's generated one shows.
             if !prTitle.isEmpty {
@@ -667,6 +774,7 @@ final class AppModel {
             canaryRepo = ""
             resultsByPhase[.update] = []
             ranScriptByPhase[.update] = nil
+            ranParamsByPhase[.update] = nil
             plannedActions = [:]
             plannedActionsPhase = nil
         }
@@ -682,13 +790,7 @@ final class AppModel {
             plannedActionsPhase = nil
         }
         statusLine = writeMode == .armed ? "ARMED — applying the reviewed plan…" : "Running…"
-        var params = paramsDraft
-        if runPhase == .update, !prTitle.isEmpty, params["prTitle"] != nil {
-            params["prTitle"] = prTitle
-        }
-        if runPhase == .update, !prBody.isEmpty, params["prBody"] != nil {
-            params["prBody"] = prBody
-        }
+        let params = effectiveParams(for: runPhase)
         var configuration = EngineConfiguration(settings: settings)
         if writeMode == .armed {
             configuration.writeMode = .armed
@@ -728,6 +830,7 @@ final class AppModel {
         runGeneration += 1
         resultsByPhase[runPhase] = outcome.results
         ranScriptByPhase[runPhase] = runScript
+        ranParamsByPhase[runPhase] = params
         logs = outcome.logs
         auditEvents = outcome.auditEvents
         // The cumulative trail: boundary event, then the run's events.
@@ -762,6 +865,7 @@ final class AppModel {
             }
             resultsByPhase[.merge] = []
             ranScriptByPhase[.merge] = nil
+            ranParamsByPhase[.merge] = nil
         }
         // A merged or cancelled repo's artifacts are consumed: its PR is no
         // longer open and its branch is gone — drop them (and their
@@ -845,6 +949,8 @@ final class AppModel {
         job.results = results
         job.resultsByPhase = Self.rawKeyed(resultsByPhase)
         job.ranScriptByPhase = Self.rawKeyed(ranScriptByPhase)
+        job.ranParamsByPhase = Self.rawKeyed(ranParamsByPhase)
+        job.declaredParamsByPhase = Self.rawKeyed(declaredParamsByPhase)
         job.scriptsByPhase = Self.rawKeyed(scriptsByPhase)
         job.paramsByPhase = Self.rawKeyed(paramsByPhase)
         job.logs = logs

@@ -239,7 +239,7 @@ struct StaleResultsBanner: View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
-            Text("The script has changed since these results were produced — Run to refresh.")
+            Text(model.staleReason ?? "")
                 .font(.callout)
             Spacer()
             Button("Clear results") { model.clearResults() }
