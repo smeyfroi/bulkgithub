@@ -349,6 +349,7 @@ GitHub Actions workflow for releases. Eventually: build, test, archive, code-sig
 - **Recording-handle fidelity:** synthesized responses may diverge from live behavior; mitigated by flagging synthetic values, logging divergence in write mode, and canary-first rollout.
 - **Long-running runs:** org-wide scans are minutes-long; the console/results streaming and cancellation need to feel native and responsive from phase 1.
 - **JS stdlib gaps:** YAML/TOML and diffing come from the host; resist letting the host API grow ad hoc — additions go through the same review as any contract change (consider ADRs for surface growth).
+- **`parse.toml` is a declared stub:** the contract reserves the name but the host throws "not yet supported". JSON is Foundation, YAML is Yams; TOML has no Foundation parser and no package dependency yet, so it waits for the first campaign that actually needs it (Cargo.toml, pyproject.toml, …). Implementation is small: add a Swift TOML library (e.g. TOMLKit), mirror the ~15-line `parse.yaml` binding in HostBindings, update the `bulkgh.d.ts` comment so generated scripts know it works.
 - **Prompt injection via repo content:** not applicable while the LLM only writes scripts from user prompts; becomes relevant if `ai.rewrite` ships — treat fetched file content as untrusted prompt input then.
 
 ## Implementation Phases
