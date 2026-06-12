@@ -356,7 +356,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.4.1;
-				PRODUCT_BUNDLE_IDENTIFIER = me.geo.bulkgithub;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meyfroidt.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
@@ -381,7 +381,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.4.1;
-				PRODUCT_BUNDLE_IDENTIFIER = me.geo.bulkgithub;
+				PRODUCT_BUNDLE_IDENTIFIER = com.meyfroidt.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;

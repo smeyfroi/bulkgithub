@@ -8,7 +8,7 @@
 # icon, Info.plist, signing).
 name: BulkGitHub
 options:
-  bundleIdPrefix: me.geo
+  bundleIdPrefix: com.meyfroidt
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -41,7 +41,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: BulkGitHub
-        PRODUCT_BUNDLE_IDENTIFIER: me.geo.bulkgithub
+        PRODUCT_BUNDLE_IDENTIFIER: com.meyfroidt.bulkgithub
         SWIFT_VERSION: "5.0"
         MARKETING_VERSION: 0.4.1
         CURRENT_PROJECT_VERSION: 1

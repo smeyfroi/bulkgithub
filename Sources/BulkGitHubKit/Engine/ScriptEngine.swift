@@ -146,7 +146,7 @@ public final class ScriptEngine {
         // triggered by a settling host promise. JS must never run on the Swift
         // cooperative pool — synchronous JS continuations would pin pool
         // threads and deadlock the pool once enough host calls are in flight.
-        let vmQueue = DispatchQueue(label: "me.geo.bulkgithub.vm")
+        let vmQueue = DispatchQueue(label: "com.meyfroidt.bulkgithub.vm")
 
         HostBindings.install(in: context, phase: phase, params: params,
                              github: github, organisation: organisation,

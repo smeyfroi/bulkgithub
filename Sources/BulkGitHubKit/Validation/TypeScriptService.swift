@@ -22,7 +22,7 @@ public final class TypeScriptService: @unchecked Sendable {
         }
     }
 
-    private let queue = DispatchQueue(label: "me.geo.bulkgithub.tsc")
+    private let queue = DispatchQueue(label: "com.meyfroidt.bulkgithub.tsc")
     private let compilerSource: String
     private let libs: [String: String]
     private let apiDeclaration: String

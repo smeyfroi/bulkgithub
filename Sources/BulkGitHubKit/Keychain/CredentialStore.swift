@@ -29,18 +29,32 @@ public enum CredentialStoreError: LocalizedError {
 public final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
     private let service: String
 
-    public init(service: String = "me.geo.bulkgithub") {
+    /// Service name before the 0.4.2 rename to com.meyfroidt; items stored
+    /// under it migrate forward on first read, then the old item is removed
+    /// so later deletes stay deleted.
+    private static let legacyService = "me.geo.bulkgithub"
+
+    public init(service: String = "com.meyfroidt.bulkgithub") {
         self.service = service
     }
 
-    private func baseQuery(for key: CredentialKey) -> [String: Any] {
+    private func baseQuery(for key: CredentialKey, service: String? = nil) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
+         kSecAttrService as String: service ?? self.service,
          kSecAttrAccount as String: key.rawValue]
     }
 
     public func read(_ key: CredentialKey) -> String? {
-        var query = baseQuery(for: key)
+        if let value = read(key, service: service) { return value }
+        guard service != Self.legacyService,
+              let legacy = read(key, service: Self.legacyService) else { return nil }
+        try? write(key, value: legacy)
+        SecItemDelete(baseQuery(for: key, service: Self.legacyService) as CFDictionary)
+        return legacy
+    }
+
+    private func read(_ key: CredentialKey, service: String) -> String? {
+        var query = baseQuery(for: key, service: service)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
