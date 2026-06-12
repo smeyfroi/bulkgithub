@@ -301,43 +301,18 @@ struct SidebarView: View {
                     .selectionDisabled(busy)
             }
 
-            // The user's own recipes, saved from the workspace (File > Save
-            // Script as Recipe…). Hidden until the first save.
-            if !model.userRecipes.isEmpty {
-                Section("Saved recipes") {
-                    ForEach(model.userRecipes) { recipe in
-                        Button {
-                            model.loadRecipe(recipe.asRecipe)
-                        } label: {
-                            Label(recipe.title, systemImage: "bookmark")
-                                .font(.callout)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(busy)
-                        .selectionDisabled()
-                        .help("\(recipe.phase.rawValue) — \(recipe.prompt)")
-                        .contextMenu {
-                            Button("Rename…") {
-                                model.recipeNameDraft = recipe.title
-                                model.renamingRecipe = recipe
-                            }
-                            Button("Delete…", role: .destructive) {
-                                model.deletingRecipe = recipe
-                            }
-                        }
-                    }
-                }
-            }
-
             // The recipe LIBRARY is reference material, not navigation: it
             // lives under its own header, one collapsible group per phase,
             // with quieter styling so it doesn't compete with the workflow.
+            // Bundled and user-saved recipes share the groups — a recipe is
+            // a recipe; only rename/delete (context menu) is saved-only.
             Section("Recipe library") {
                 ForEach(JobPhase.allCases, id: \.self) { phase in
-                    let recipes = RecipeCatalog.all.filter { $0.phase == phase }
-                    if !recipes.isEmpty {
+                    let bundled = RecipeCatalog.all.filter { $0.phase == phase }
+                    let saved = model.userRecipes.filter { $0.phase == phase }
+                    if !bundled.isEmpty || !saved.isEmpty {
                         DisclosureGroup(isExpanded: expansionBinding(for: phase)) {
-                            ForEach(recipes) { recipe in
+                            ForEach(bundled) { recipe in
                                 Button {
                                     model.loadRecipe(recipe)
                                 } label: {
@@ -348,6 +323,27 @@ struct SidebarView: View {
                                 .disabled(busy)
                                 .selectionDisabled()
                                 .help(recipe.prompt)
+                            }
+                            ForEach(saved) { recipe in
+                                Button {
+                                    model.loadRecipe(recipe.asRecipe)
+                                } label: {
+                                    Label(recipe.title, systemImage: "bookmark")
+                                        .font(.callout)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(busy)
+                                .selectionDisabled()
+                                .help(recipe.prompt)
+                                .contextMenu {
+                                    Button("Rename…") {
+                                        model.recipeNameDraft = recipe.title
+                                        model.renamingRecipe = recipe
+                                    }
+                                    Button("Delete…", role: .destructive) {
+                                        model.deletingRecipe = recipe
+                                    }
+                                }
                             }
                         } label: {
                             Text(phase.rawValue.capitalized)

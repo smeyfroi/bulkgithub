@@ -167,10 +167,10 @@ struct ParamsBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Label("Script parameters", systemImage: "slider.horizontal.3")
+                Label("Param overrides", systemImage: "slider.horizontal.3")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("— passed to the script as job.params on the next run; the source keeps its declared defaults")
+                Text("— override the script's meta.params defaults on the next run (the script reads job.params; the source is untouched)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
