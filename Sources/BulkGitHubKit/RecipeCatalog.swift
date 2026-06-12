@@ -35,6 +35,11 @@ public struct Recipe: Identifiable, Sendable {
 
 public enum RecipeCatalog {
     public static let all: [Recipe] = [
+        Recipe(id: "find_file_missing_string",
+               title: "Find file missing a string",
+               prompt: "find repos where the file README.md does not contain \"# License\"",
+               phase: .check,
+               systemImage: "magnifyingglass.circle"),
         Recipe(id: "find_yaml_key_value",
                title: "Find YAML key/value",
                prompt: "find repos that include a file at deploy/prod.yml where the key account_id has a value of \"481832923858\"",
@@ -45,6 +50,11 @@ public enum RecipeCatalog {
                prompt: "repos where a file in deploy/ contains the string `ec2-shell-prod-eu-west-1-keypair-1`",
                phase: .check,
                systemImage: "text.magnifyingglass"),
+        Recipe(id: "add_section_to_file",
+               title: "Add section to file",
+               prompt: "add a \"# License\" section with body \"TBD\" to README.md",
+               phase: .update,
+               systemImage: "text.append"),
         Recipe(id: "remove_line_with_string",
                title: "Delete lines with string",
                prompt: "delete the line containing `ec2-shell-prod-eu-west-1-keypair-1` from files in deploy/",

@@ -13,6 +13,10 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         // recipe choice within the check phase.
         switch context.phase {
         case .update:
+            if prompt.range(of: #"\b(add|append|insert)\b"#,
+                            options: [.regularExpression, .caseInsensitive]) != nil {
+                return try addSectionScript(for: prompt)
+            }
             return try lineRemovalScript(for: prompt)
         case .merge:
             let recipe = prompt.range(of: "cancel", options: .caseInsensitive) != nil
@@ -22,11 +26,50 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
             }
             return script
         case .check:
+            // Absence phrasing wins over presence: "does not contain" also
+            // contains the word "contain".
+            if prompt.range(of: #"(not contain|doesn't contain|missing|without)"#,
+                            options: [.regularExpression, .caseInsensitive]) != nil {
+                return try missingStringScript(for: prompt)
+            }
             if prompt.range(of: "contains", options: .caseInsensitive) != nil {
                 return try stringScanScript(for: prompt)
             }
             return try yamlKeyValueScript(for: prompt)
         }
+    }
+
+    private func missingStringScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "find_file_missing_string") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let path = firstMatch(in: prompt, pattern: #"([\w./+-]+\.(?:ya?ml|json|toml|txt|md))"#) {
+            script = Self.replaceParam(in: script, name: "path", value: path)
+        }
+        if let marker = firstMatch(in: prompt, pattern: #"["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "marker", value: marker)
+        }
+        return script
+    }
+
+    private func addSectionScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "add_section_to_file") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let path = firstMatch(in: prompt, pattern: #"([\w./+-]+\.(?:ya?ml|json|toml|txt|md))"#) {
+            script = Self.replaceParam(in: script, name: "path", value: path)
+        }
+        if let heading = firstMatch(in: prompt, pattern: #"["']([^"']+)["']\s+section"#)
+            ?? firstMatch(in: prompt, pattern: #"["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "heading", value: heading)
+        }
+        if let body = firstMatch(in: prompt, pattern: #"(?:with|body)(?:\s+body)?\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "body", value: body)
+        }
+        if let title = firstMatch(in: prompt, pattern: #"pull request title:\s*"([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "prTitle", value: title)
+        }
+        return script
     }
 
     private func lineRemovalScript(for prompt: String) throws -> String {

@@ -58,9 +58,11 @@ public enum ResourceLocator {
         string(at: "recipes/\(name).ts")
     }
 
-    /// The golden recipe: the plan's worked example as a runnable script.
+    /// The golden recipe: the first-launch example — find repos whose
+    /// README lacks a License section (paired with the add_section_to_file
+    /// update recipe).
     public static var goldenRecipe: String? {
-        recipe(named: "find_yaml_key_value")
+        recipe(named: "find_file_missing_string")
     }
 
     /// The bundled TypeScript compiler and the ES lib declaration files it

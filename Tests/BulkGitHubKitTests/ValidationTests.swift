@@ -67,7 +67,7 @@ struct ValidationTests {
     @Test("transpiled recipe runs against fixtures end to end")
     func transpileAndRun() async throws {
         let service = try #require(Self.service)
-        let recipe = try #require(ResourceLocator.goldenRecipe)
+        let recipe = try #require(ResourceLocator.recipe(named: "find_yaml_key_value"))
         let js = try service.transpile(source: recipe)
         #expect(!js.contains(": Promise<void>"), "types should be stripped")
 

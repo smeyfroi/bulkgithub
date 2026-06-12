@@ -2,15 +2,16 @@ import Foundation
 import Testing
 @testable import BulkGitHubKit
 
-/// The full product loop on fixtures: validate the golden recipe (lint +
-/// type-check + transpile + meta), run it through the engine with a read-only
-/// handle, and assert the exact per-repo outcomes the demo dataset encodes.
-@Suite("Golden recipe end-to-end")
+/// The full product loop on fixtures: validate the YAML worked example (lint
+/// + type-check + transpile + meta), run it through the engine with a
+/// read-only handle, and assert the exact per-repo outcomes the demo dataset
+/// encodes.
+@Suite("YAML recipe end-to-end")
 struct GoldenRecipeTests {
 
     @Test("check run produces the expected per-repo statuses")
     func endToEnd() async throws {
-        let recipe = try #require(ResourceLocator.goldenRecipe)
+        let recipe = try #require(ResourceLocator.recipe(named: "find_yaml_key_value"))
         let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
         let validated = try pipeline.validate(source: recipe)
         #expect(validated.diagnostics.filter { $0.severity == .error }.isEmpty)
@@ -53,7 +54,7 @@ struct GoldenRecipeTests {
 
     @Test("edited params change behaviour without regeneration")
     func paramOverride() async throws {
-        let recipe = try #require(ResourceLocator.goldenRecipe)
+        let recipe = try #require(ResourceLocator.recipe(named: "find_yaml_key_value"))
         let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
         let validated = try pipeline.validate(source: recipe)
 
@@ -71,6 +72,108 @@ struct GoldenRecipeTests {
         for result in outcome.results { statusByRepo[result.id] = result.status }
         #expect(statusByRepo["geome/web-frontend"] == .verifiedMatch)
         #expect(statusByRepo["geome/api-service"] == .skipped)
+    }
+}
+
+/// The golden recipe pair (README/license): the check half finds READMEs
+/// missing the section, the update half plans appending it. Both against
+/// the demo fixtures.
+@Suite("Golden README recipe end-to-end")
+struct ReadmeLicenseRecipeTests {
+
+    @Test("check finds READMEs missing the License section")
+    func checkEndToEnd() async throws {
+        let recipe = try #require(ResourceLocator.goldenRecipe)
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.diagnostics.filter { $0.severity == .error }.isEmpty)
+        #expect(validated.meta.phase == .check)
+        #expect(validated.meta.params["path"] == "README.md")
+        #expect(validated.meta.params["marker"] == "# License")
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               onEvent: { _ in })
+        #expect(outcome.status == .completed)
+
+        var statusByRepo: [String: RepoStatus] = [:]
+        for result in outcome.results { statusByRepo[result.id] = result.status }
+        #expect(statusByRepo["geome/web-frontend"] == .verifiedMatch)
+        #expect(statusByRepo["geome/data-pipeline"] == .verifiedMatch)
+        #expect(statusByRepo["geome/docs-site"] == .verifiedMatch)
+        #expect(statusByRepo["geome/api-service"] == .skipped)      // already has the section
+        #expect(statusByRepo["geome/legacy-batch"] == .skipped)     // archived
+        #expect(statusByRepo["geome/infra-tools"] == .skipped)      // no README
+        #expect(statusByRepo["geome/flaky-service"] == .failed)
+
+        // Matches carry forward for the update recipe (JSON-encoded, with
+        // escaped slashes — assert on the repo names).
+        #expect(outcome.state["missingMarker"]?.contains("web-frontend") == true)
+        #expect(outcome.state["missingMarker"]?.contains("data-pipeline") == true)
+    }
+
+    @Test("update dry run plans branch + README edit + PR per matching repo")
+    func updateDryRun() async throws {
+        let recipe = try #require(ResourceLocator.recipe(named: "add_section_to_file"))
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.meta.phase == .update)
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               onEvent: { _ in })
+        #expect(outcome.status == .completed)
+
+        var statusByRepo: [String: RepoStatus] = [:]
+        for result in outcome.results { statusByRepo[result.id] = result.status }
+        #expect(statusByRepo["geome/web-frontend"] == .planned)
+        #expect(statusByRepo["geome/data-pipeline"] == .planned)
+        #expect(statusByRepo["geome/docs-site"] == .planned)
+        #expect(statusByRepo["geome/api-service"] == .skipped)
+        #expect(statusByRepo["geome/legacy-batch"] == .skipped)
+        #expect(statusByRepo["geome/flaky-service"] == .failed)
+
+        let docsActions = try #require(outcome.plannedActions["geome/docs-site"])
+        #expect(docsActions.count == 3)
+        guard case .createBranch(let branch, _) = docsActions[0] else {
+            Issue.record("expected createBranch first"); return
+        }
+        #expect(branch == "bulkgh/add-license-section")
+        guard case .putContent(let path, _, _, let before, let after) = docsActions[1] else {
+            Issue.record("expected putContent second"); return
+        }
+        #expect(path == "README.md")
+        #expect(before == "# Docs\n")
+        #expect(after == "# Docs\n\n# License\n\nTBD\n")
+        guard case .createPR(let head, let title, _) = docsActions[2] else {
+            Issue.record("expected createPR third"); return
+        }
+        #expect(head == branch)
+        #expect(title == "Add License section")
+    }
+
+    @Test("prompts route through the mock LLM to both recipes, params patched")
+    func mockRouting() async throws {
+        let check = try await MockLLMClient().makeScript(
+            prompt: "find repos where the file README.md does not contain \"# License\"",
+            context: ScriptGenerationContext(organisation: "geome"))
+        #expect(check.contains("path: \"README.md\""))
+        #expect(check.contains("marker: \"# License\""))
+        #expect(ValidationPipeline.sniffPhase(from: check) == .check)
+
+        let update = try await MockLLMClient().makeScript(
+            prompt: "add a '# License' section with 'TBD' to README.md",
+            context: ScriptGenerationContext(organisation: "geome", phase: .update))
+        #expect(update.contains("heading: \"# License\""))
+        #expect(update.contains("body: \"TBD\""))
+        #expect(update.contains("path: \"README.md\""))
+        #expect(ValidationPipeline.sniffPhase(from: update) == .update)
     }
 }
 

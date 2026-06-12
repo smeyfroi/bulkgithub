@@ -603,7 +603,7 @@ final class AppModel {
     }
 
     func loadGoldenRecipe() {
-        loadRecipe(named: "find_yaml_key_value")
+        loadRecipe(named: "find_file_missing_string")
     }
 
     // MARK: Client selection

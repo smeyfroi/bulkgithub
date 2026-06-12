@@ -338,18 +338,37 @@ extension FixtureGitHubClient {
         }
         """
 
+        // The README/license worked example (the golden recipe pair): one
+        // README already carries the section (skip), several lack it
+        // (matches — including the master-default repo), one repo has no
+        // README at all (skip), and the flaky repo's fetch fails.
+        let licensedREADME = """
+        # api-service
+
+        Internal service.
+
+        # License
+
+        MIT
+        """
+
         return FixtureGitHubClient(
             repos: [api, web, pipeline, legacy, infra, flaky, docs],
             contents: [
                 api.fullName: ["deploy/prod.yml": matchingYAML,
-                               ".github/dependabot.yml": "version: 2\nupdates: []\n"],
+                               ".github/dependabot.yml": "version: 2\nupdates: []\n",
+                               "README.md": licensedREADME],
                 web.fullName: ["deploy/prod.yml": differingYAML,
-                               "deploy/infra.json": keypairJSON],
+                               "deploy/infra.json": keypairJSON,
+                               "README.md": "# web-frontend\n\nCustomer-facing frontend.\n"],
                 pipeline.fullName: ["deploy/prod.yml": matchingYAML,
-                                    "deploy/keys.yml": keypairYAML],
-                legacy.fullName: ["deploy/prod.yml": matchingYAML],
+                                    "deploy/keys.yml": keypairYAML,
+                                    "README.md": "# data-pipeline\n"],
+                legacy.fullName: ["deploy/prod.yml": matchingYAML,
+                                  "README.md": "# legacy-batch\n"],
                 infra.fullName: [:],  // stale search hit: repo exists, file absent
-                flaky.fullName: ["deploy/prod.yml": matchingYAML], // unreachable: error injected
+                flaky.fullName: ["deploy/prod.yml": matchingYAML,
+                                 "README.md": "# flaky-service\n"], // unreachable: error injected
                 docs.fullName: ["README.md": "# Docs\n"],
             ],
             searchResults: [api, web, pipeline, legacy, infra, flaky],
