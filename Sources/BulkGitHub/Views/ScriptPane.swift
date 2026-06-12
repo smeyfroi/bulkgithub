@@ -24,7 +24,11 @@ struct ScriptPane: View {
                                                         startPoint: .top, endPoint: .bottom))
                     TextField(promptPlaceholder,
                               text: $model.prompt, axis: .vertical)
-                        .lineLimit(2...4)
+                        .lineLimit(2...6)
+                        // The ranged lineLimit grows with content but does
+                        // not reserve height — guarantee room for two full
+                        // lines so a two-line prompt never scrolls.
+                        .frame(minHeight: 40, alignment: .leading)
                         .font(.system(size: 15))
                         .textFieldStyle(.plain)
                         .focusEffectDisabled()
