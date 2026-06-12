@@ -61,12 +61,12 @@ struct ListFilesTests {
              organisation: "geome", onEvent: { _ in })
 
         #expect(outcome.status == .completed)
-        #expect(outcome.logs.contains("all=.github/dependabot.yml,README.md,deploy/prod.yml"))
-        #expect(outcome.logs.contains("yml=2"))
-        #expect(outcome.logs.contains("deploy=deploy/prod.yml"))
+        #expect(outcome.logs.contains("all=.github/dependabot.yml,README.md,deploy/cron.yml,deploy/logging.yml,deploy/prod.yml,project.json"))
+        #expect(outcome.logs.contains("yml=4"))
+        #expect(outcome.logs.contains("deploy=deploy/cron.yml,deploy/logging.yml,deploy/prod.yml"))
         #expect(outcome.logs.contains("top=0"))
         #expect(outcome.auditEvents.contains {
-            $0.kind == "gh.listFiles" && $0.detail.contains("1 of 3 files")
+            $0.kind == "gh.listFiles" && $0.detail.contains("3 of 6 files")
         })
     }
 

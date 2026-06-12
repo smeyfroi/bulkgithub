@@ -1,11 +1,11 @@
 const meta: ScriptMeta = {
-  title: "Find repos where a YAML file sets a key to a value",
+  title: "Find repos where a YAML/JSON file sets a key to a value",
   phase: "check",
   apiVersion: 1,
   params: {
-    path: "deploy/prod.yml",
-    key: "account_id",
-    value: "481832923858",
+    path: "project.json",
+    key: "type",
+    value: "rails",
   },
 };
 

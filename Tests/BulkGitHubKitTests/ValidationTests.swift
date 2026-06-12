@@ -74,7 +74,7 @@ struct ValidationTests {
         let meta = try ValidationPipeline.extractMeta(fromJavaScript: js)
         #expect(meta.title.contains("YAML"))
         #expect(meta.phase == .check)
-        #expect(meta.params["path"] == "deploy/prod.yml")
+        #expect(meta.params["path"] == "project.json")
 
         let outcome = await ScriptEngine().run(javaScript: js,
                                                phase: meta.phase,

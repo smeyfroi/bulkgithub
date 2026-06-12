@@ -37,8 +37,8 @@ struct GoldenRecipeTests {
         #expect(statusByRepo["geome/docs-site"] == nil)           // never a candidate
 
         let match = outcome.results.first { $0.id == "geome/api-service" }
-        #expect(match?.evidence.first?.path == "deploy/prod.yml")
-        #expect(match?.evidence.first?.explanation?.contains("account_id") == true)
+        #expect(match?.evidence.first?.path == "project.json")
+        #expect(match?.evidence.first?.explanation?.contains("type") == true)
 
         let skipReason = outcome.results.first { $0.id == "geome/web-frontend" }?.reason
         #expect(skipReason?.contains("differs") == true)
@@ -59,7 +59,7 @@ struct GoldenRecipeTests {
         let validated = try pipeline.validate(source: recipe)
 
         var params = validated.meta.params
-        params["value"] = "999911112222"   // web-frontend's value in the fixtures
+        params["value"] = "react"   // web-frontend's project type in the fixtures
 
         let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
                                                phase: validated.meta.phase,
@@ -337,5 +337,117 @@ struct SupportTests {
         """
         #expect(PromptLibrary.extractCode(from: fenced) == "const meta = { title: \"x\" };")
         #expect(PromptLibrary.extractCode(from: "plain code") == "plain code")
+    }
+}
+
+/// The two catalog scenarios introduced with the generic recipe set: the
+/// glob-scanning YAML key/value check and the marker-block deletion update,
+/// both against the demo fixtures, plus their mock-LLM prompt routing.
+@Suite("Glob key/value and marker deletion recipes")
+struct CatalogRecipeTests {
+
+    @Test("glob key/value check finds RetentionInDays = 14")
+    func globKeyValueEndToEnd() async throws {
+        let recipe = try #require(ResourceLocator.recipe(named: "find_yaml_key_value_glob"))
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.diagnostics.filter { $0.severity == .error }.isEmpty)
+        #expect(validated.meta.phase == .check)
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               onEvent: { _ in })
+        #expect(outcome.status == .completed)
+
+        var byRepo: [String: RepoResult] = [:]
+        for result in outcome.results { byRepo[result.id] = result }
+
+        #expect(byRepo["geome/api-service"]?.status == .verifiedMatch)
+        #expect(byRepo["geome/api-service"]?.evidence.first?.path == "deploy/logging.yml")
+        #expect(byRepo["geome/web-frontend"]?.status == .skipped)        // 30, differs
+        #expect(byRepo["geome/web-frontend"]?.reason?.contains("differs") == true)
+        #expect(byRepo["geome/data-pipeline"]?.status == .skipped)       // key absent
+        #expect(byRepo["geome/legacy-batch"]?.status == .skipped)        // archived
+        #expect(byRepo["geome/infra-tools"]?.status == .skipped)         // no files
+        #expect(byRepo["geome/docs-site"]?.status == .skipped)           // no deploy/
+        #expect(byRepo["geome/flaky-service"]?.status == .failed)
+    }
+
+    @Test("marker deletion dry run plans the marked blocks, inclusive")
+    func markerDeletionDryRun() async throws {
+        let recipe = try #require(ResourceLocator.recipe(named: "delete_lines_between_markers"))
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.meta.phase == .update)
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "geome",
+                                               onEvent: { _ in })
+        #expect(outcome.status == .completed)
+
+        var statusByRepo: [String: RepoStatus] = [:]
+        for result in outcome.results { statusByRepo[result.id] = result.status }
+        #expect(statusByRepo["geome/api-service"] == .planned)
+        #expect(statusByRepo["geome/web-frontend"] == .planned)
+        #expect(statusByRepo["geome/data-pipeline"] == .skipped)   // no marked blocks
+        #expect(statusByRepo["geome/legacy-batch"] == .skipped)    // archived
+        #expect(statusByRepo["geome/flaky-service"] == .failed)
+
+        let apiActions = try #require(outcome.plannedActions["geome/api-service"])
+        #expect(apiActions.count == 3)
+        guard case .createBranch(let branch, _) = apiActions[0] else {
+            Issue.record("expected createBranch first"); return
+        }
+        #expect(branch == "bulkgh/delete-marked-block")
+        guard case .putContent(let path, _, _, _, let after) = apiActions[1] else {
+            Issue.record("expected putContent second"); return
+        }
+        #expect(path == "deploy/cron.yml")
+        #expect(after == """
+        jobs:
+          - daily_report
+        """)
+        guard case .createPR(_, let title, _) = apiActions[2] else {
+            Issue.record("expected createPR third"); return
+        }
+        #expect(title == "Delete marked block")
+
+        let webEdits = try #require(outcome.plannedActions["geome/web-frontend"])
+            .compactMap { action -> String? in
+                guard case .putContent(_, _, _, _, let after) = action else { return nil }
+                return after
+            }
+        #expect(webEdits == ["window: nightly\nnotify: ops"])
+    }
+
+    @Test("catalog prompts route through the mock LLM with params patched")
+    func mockRouting() async throws {
+        let yaml = try await MockLLMClient().makeScript(
+            prompt: "find repos that contain \"project.json\" where the \"type\" value is \"rails\"",
+            context: ScriptGenerationContext(organisation: "geome"))
+        #expect(yaml.contains("path: \"project.json\""))
+        #expect(yaml.contains("key: \"type\""))
+        #expect(yaml.contains("value: \"rails\""))
+
+        let glob = try await MockLLMClient().makeScript(
+            prompt: "repos where a yaml file in deploy/** has a key \"RetentionInDays\" with a value \"14\"",
+            context: ScriptGenerationContext(organisation: "geome"))
+        #expect(glob.contains("glob: \"deploy/**\""))
+        #expect(glob.contains("key: \"RetentionInDays\""))
+        #expect(glob.contains("value: \"14\""))
+        #expect(ValidationPipeline.sniffPhase(from: glob) == .check)
+
+        let marker = try await MockLLMClient().makeScript(
+            prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\"",
+            context: ScriptGenerationContext(organisation: "geome", phase: .update))
+        #expect(marker.contains("startMarker: \"# >>>\""))
+        #expect(marker.contains("endMarker: \"# <<<\""))
+        #expect(ValidationPipeline.sniffPhase(from: marker) == .update)
     }
 }

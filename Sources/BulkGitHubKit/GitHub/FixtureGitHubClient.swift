@@ -352,18 +352,69 @@ extension FixtureGitHubClient {
         MIT
         """
 
+        // The project.json key/value scenario (Find YAML key/value recipe):
+        // two rails projects (matches), one react (value differs), the rest
+        // have no project.json.
+        let railsProject = """
+        {
+          "name": "service",
+          "type": "rails"
+        }
+        """
+        let reactProject = """
+        {
+          "name": "web-frontend",
+          "type": "react"
+        }
+        """
+
+        // The glob key/value scenario (Find YAML key/value under path glob):
+        // RetentionInDays matches in api, differs in web, absent elsewhere.
+        let retention14 = """
+        logGroup: app
+        RetentionInDays: 14
+        """
+        let retention30 = """
+        logGroup: web
+        RetentionInDays: 30
+        """
+
+        // The marker-block scenario (Delete lines between marker text):
+        // "# >>> … # <<<" blocks in api and web, none elsewhere.
+        let markedCron = """
+        jobs:
+          # >>>
+          - legacy_export
+          # <<<
+          - daily_report
+        """
+        let markedMaintenance = """
+        window: nightly
+        # >>>
+        drainQueues: true
+        # <<<
+        notify: ops
+        """
+
         return FixtureGitHubClient(
             repos: [api, web, pipeline, legacy, infra, flaky, docs],
             contents: [
                 api.fullName: ["deploy/prod.yml": matchingYAML,
                                ".github/dependabot.yml": "version: 2\nupdates: []\n",
-                               "README.md": licensedREADME],
+                               "README.md": licensedREADME,
+                               "project.json": railsProject,
+                               "deploy/logging.yml": retention14,
+                               "deploy/cron.yml": markedCron],
                 web.fullName: ["deploy/prod.yml": differingYAML,
                                "deploy/infra.json": keypairJSON,
-                               "README.md": "# web-frontend\n\nCustomer-facing frontend.\n"],
+                               "README.md": "# web-frontend\n\nCustomer-facing frontend.\n",
+                               "project.json": reactProject,
+                               "deploy/logging.yml": retention30,
+                               "deploy/maintenance.yml": markedMaintenance],
                 pipeline.fullName: ["deploy/prod.yml": matchingYAML,
                                     "deploy/keys.yml": keypairYAML,
-                                    "README.md": "# data-pipeline\n"],
+                                    "README.md": "# data-pipeline\n",
+                                    "project.json": railsProject],
                 legacy.fullName: ["deploy/prod.yml": matchingYAML,
                                   "README.md": "# legacy-batch\n"],
                 infra.fullName: [:],  // stale search hit: repo exists, file absent

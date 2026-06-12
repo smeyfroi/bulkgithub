@@ -17,6 +17,9 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
                             options: [.regularExpression, .caseInsensitive]) != nil {
                 return try addSectionScript(for: prompt)
             }
+            if prompt.range(of: "marker", options: .caseInsensitive) != nil {
+                return try markerDeletionScript(for: prompt)
+            }
             return try lineRemovalScript(for: prompt)
         case .merge:
             let recipe = prompt.range(of: "cancel", options: .caseInsensitive) != nil
@@ -32,11 +35,51 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
                             options: [.regularExpression, .caseInsensitive]) != nil {
                 return try missingStringScript(for: prompt)
             }
+            // A glob means "shape known, path unknown" — the glob-scanning
+            // key/value recipe, not the fixed-path one.
+            if prompt.range(of: "**") != nil {
+                return try globKeyValueScript(for: prompt)
+            }
             if prompt.range(of: "contains", options: .caseInsensitive) != nil {
                 return try stringScanScript(for: prompt)
             }
             return try yamlKeyValueScript(for: prompt)
         }
+    }
+
+    private func globKeyValueScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "find_yaml_key_value_glob") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w./*-]+)"#) {
+            script = Self.replaceParam(in: script, name: "glob", value: glob)
+        }
+        if let key = firstMatch(in: prompt, pattern: #"key\s+["']?([A-Za-z0-9_.-]+)"#) {
+            script = Self.replaceParam(in: script, name: "key", value: key)
+        }
+        if let value = firstMatch(in: prompt, pattern: #"value\s+(?:of\s+|is\s+)?["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "value", value: value)
+        }
+        return script
+    }
+
+    private func markerDeletionScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "delete_lines_between_markers") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let start = firstMatch(in: prompt, pattern: #"marker\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "startMarker", value: start)
+        }
+        if let end = firstMatch(in: prompt, pattern: #"next\s+marker\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "endMarker", value: end)
+        }
+        if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w./]*\*[\w./*-]*)"#) {
+            script = Self.replaceParam(in: script, name: "glob", value: glob)
+        }
+        if let title = firstMatch(in: prompt, pattern: #"pull request title:\s*"([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "prTitle", value: title)
+        }
+        return script
     }
 
     private func missingStringScript(for prompt: String) throws -> String {
@@ -96,10 +139,14 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         if let path = firstMatch(in: prompt, pattern: #"([\w./+-]+\.(?:ya?ml|json|toml|txt|md))"#) {
             script = Self.replaceParam(in: script, name: "path", value: path)
         }
-        if let value = firstMatch(in: prompt, pattern: #""([^"]+)""#) {
+        // "a value of "x"" / "value is 'x'" — anchored on the word "value" so
+        // a quoted path or key earlier in the prompt can't be mistaken for it.
+        if let value = firstMatch(in: prompt, pattern: #"value\s+(?:of\s+|is\s+)?["']([^"']+)["']"#) {
             script = Self.replaceParam(in: script, name: "value", value: value)
         }
-        if let key = firstMatch(in: prompt, pattern: #"key\s+`?([A-Za-z0-9_.-]+)`?"#) {
+        // "the key account_id" or "the 'type' value".
+        if let key = firstMatch(in: prompt, pattern: #"key\s+["'`]?([A-Za-z0-9_.-]+)["'`]?"#)
+            ?? firstMatch(in: prompt, pattern: #"["']([A-Za-z0-9_.-]+)["']\s+value"#) {
             script = Self.replaceParam(in: script, name: "key", value: key)
         }
         return script
