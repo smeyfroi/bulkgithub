@@ -148,6 +148,15 @@ public enum PromptLibrary {
     is merged or closed. Merging requires the user's in-app approval — the \
     host refuses unapproved PRs and heads that moved since approval. All \
     merges are squash merges; there is no other method.
+    18. Config keys are usually NESTED — when checking a parsed YAML/JSON \
+    document for a key, search the whole document recursively and put the \
+    dotted path where it matched in the evidence explanation; a top-level \
+    lookup misses almost everything (CloudFormation: \
+    Resources.X.Properties.RetentionInDays). YAML also lives under other \
+    extensions — CloudFormation uses ".template" — so make the extension \
+    list a tunable param alongside the glob. parse.yaml tolerates custom \
+    tags (!Ref, !GetAtt, !Sub construct as plain values), so such templates \
+    parse fine.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {

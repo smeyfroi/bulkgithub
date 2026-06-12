@@ -55,16 +55,32 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         guard var script = ResourceLocator.recipe(named: "find_yaml_key_value_glob") else {
             throw LLMClientError.invalidResponse("recipe resource missing from bundle")
         }
-        if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w./*-]+)"#) {
+        // Glob needs a path-ish shape ("/" or "*") — "in yaml files" is prose.
+        if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w.-]*[/*][\w./*-]*)"#) {
             script = Self.replaceParam(in: script, name: "glob", value: glob)
+        }
+        if let extensions = extensionList(in: prompt) {
+            script = Self.replaceParam(in: script, name: "extensions", value: extensions)
         }
         if let key = firstMatch(in: prompt, pattern: #"key\s+["']?([A-Za-z0-9_.-]+)"#) {
             script = Self.replaceParam(in: script, name: "key", value: key)
         }
-        if let value = firstMatch(in: prompt, pattern: #"value\s+(?:of\s+|is\s+)?["']([^"']+)["']"#) {
+        // "with a value "x"" / "sets the key … to "x"".
+        if let value = firstMatch(in: prompt, pattern: #"value\s+(?:of\s+|is\s+)?["']([^"']+)["']"#)
+            ?? firstMatch(in: prompt, pattern: #"to\s+["']([^"']+)["']"#) {
             script = Self.replaceParam(in: script, name: "value", value: value)
         }
         return script
+    }
+
+    /// "(extensions yml, yaml, template)" → "yml,yaml,template".
+    private func extensionList(in prompt: String) -> String? {
+        guard let list = firstMatch(
+            in: prompt,
+            pattern: #"extensions?\s+([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)"#) else { return nil }
+        return list.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: ",")
     }
 
     private func changeValueScript(for prompt: String) throws -> String {
@@ -83,6 +99,9 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         // Glob needs a path-ish shape ("/" or "*") — "in yaml files" is prose.
         if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w.-]*[/*][\w./*-]*)"#) {
             script = Self.replaceParam(in: script, name: "glob", value: glob)
+        }
+        if let extensions = extensionList(in: prompt) {
+            script = Self.replaceParam(in: script, name: "extensions", value: extensions)
         }
         if let title = firstMatch(in: prompt, pattern: #"pull request title:\s*"([^"]+)""#) {
             script = Self.replaceParam(in: script, name: "prTitle", value: title)

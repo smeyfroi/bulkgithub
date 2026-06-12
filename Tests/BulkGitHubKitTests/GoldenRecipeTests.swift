@@ -484,9 +484,10 @@ struct CatalogRecipeTests {
         #expect(yaml.contains("value: \"rails\""))
 
         let glob = try await MockLLMClient().makeScript(
-            prompt: "repos where a yaml file in deploy/** has a key \"RetentionInDays\" with a value \"14\"",
+            prompt: "repos where a yaml file (extensions yml, yaml, template) under deploy/** sets the key \"RetentionInDays\" to \"14\" at any nesting depth",
             context: ScriptGenerationContext(organisation: "example-org"))
         #expect(glob.contains("glob: \"deploy/**\""))
+        #expect(glob.contains("extensions: \"yml,yaml,template\""))
         #expect(glob.contains("key: \"RetentionInDays\""))
         #expect(glob.contains("value: \"14\""))
         #expect(ValidationPipeline.sniffPhase(from: glob) == .check)
@@ -499,12 +500,13 @@ struct CatalogRecipeTests {
         #expect(ValidationPipeline.sniffPhase(from: marker) == .update)
 
         let change = try await MockLLMClient().makeScript(
-            prompt: "change the value of \"RetentionInDays\" from \"14\" to \"30\" in yaml files under deploy/**",
+            prompt: "change the value of \"RetentionInDays\" from \"14\" to \"30\" wherever it appears in yaml files (extensions yml, yaml, template) under deploy/**",
             context: ScriptGenerationContext(organisation: "example-org", phase: .update))
         #expect(change.contains("key: \"RetentionInDays\""))
         #expect(change.contains("from: \"14\""))
         #expect(change.contains("to: \"30\""))
         #expect(change.contains("glob: \"deploy/**\""))
+        #expect(change.contains("extensions: \"yml,yaml,template\""))
         #expect(ValidationPipeline.sniffPhase(from: change) == .update)
     }
 }
