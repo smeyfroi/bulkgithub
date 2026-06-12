@@ -25,6 +25,12 @@ enum WindowSnapshotter {
 
     @MainActor
     static func save() {
+        // Ad-hoc rebuilds change the code signature, which invalidates the
+        // TCC grant — preflight and re-prompt instead of failing silently.
+        guard CGPreflightScreenCaptureAccess() else {
+            CGRequestScreenCaptureAccess()
+            return
+        }
         guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible) else { return }
         let windowID = CGWindowID(window.windowNumber)
         let scale = window.backingScaleFactor

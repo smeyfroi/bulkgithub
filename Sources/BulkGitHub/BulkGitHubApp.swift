@@ -14,6 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private extension View {
+    /// Hide the window title's display (macOS 15+; earlier systems keep it).
+    @ViewBuilder
+    func windowTitleHidden() -> some View {
+        if #available(macOS 15.0, *) {
+            toolbar(removing: .title)
+        } else {
+            self
+        }
+    }
+}
+
 @main
 struct BulkGitHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -35,6 +47,11 @@ struct BulkGitHubApp: App {
                         MainActor.assumeIsolated { model.saveNow() }
                     }
                 }
+                // The app's name lives in the menu bar; displayed in the
+                // window it crowds the traffic lights next to the flow
+                // control. The title itself stays — Mission Control and
+                // the Window menu use it — it just isn't drawn.
+                .windowTitleHidden()
         }
         .commands {
             // Single-workspace app: ⌘N starts a fresh job (after
