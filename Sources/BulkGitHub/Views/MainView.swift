@@ -117,6 +117,19 @@ struct MainView: View {
         .sheet(isPresented: $model.showApplySheet) {
             ApplySheet()
         }
+        .alert("Start a new job?", isPresented: $model.showNewJobConfirmation) {
+            Button("Discard and Start New Job", role: .destructive) {
+                model.startNewJob()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This discards the whole job — prompts, scripts, results, the reviewed plan, and the audit trail, in every phase. Settings and credentials are kept.")
+        }
+        .alert("This job still has open PRs or branches", isPresented: $model.showNewJobBlocked) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Starting a new job would abandon what this job created on the remote — the artifact registry is the only authority that can merge or cancel it. Merge the approved PRs or run the \"Cancel job\" recipe first.")
+        }
         .onChange(of: model.settings.useFixtureGitHub) {
             model.dataSourceChanged()
         }

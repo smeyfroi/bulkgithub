@@ -350,6 +350,62 @@ final class AppModel {
         saveNow()
     }
 
+    // MARK: New job (File > New Job…, ⌘N)
+
+    /// Drives the confirmation alert — New Job always confirms before
+    /// discarding, since it wipes every phase's workspace and history.
+    var showNewJobConfirmation = false
+    /// Drives the refusal alert when the artifact registry is non-empty.
+    var showNewJobBlocked = false
+
+    func requestNewJob() {
+        guard !running, !generating, !validating else { return }
+        // Wiping the registry would orphan the branches/PRs this job
+        // created: the registry is the only authority merge/cancel has, so
+        // nothing could ever touch them again. Refuse, pointing at the
+        // merge/cancel path, rather than confirm-through.
+        if !artifacts.isEmpty {
+            showNewJobBlocked = true
+        } else {
+            showNewJobConfirmation = true
+        }
+    }
+
+    /// Discard the entire job — all three phase workspaces, results, plans,
+    /// logs, the audit trail, and carried job state — and start over exactly
+    /// like a first launch (golden recipe loaded). Settings and credentials
+    /// survive. Reached only via requestNewJob's confirmation.
+    func startNewJob() {
+        guard !running, !generating, artifacts.isEmpty else { return }
+        phase = .check
+        prompt = ""
+        scriptText = ""
+        paramsDraft = [:]
+        prTitle = ""
+        prBody = ""
+        canaryRepo = ""
+        jobState = [:]
+        promptsByPhase = [:]
+        scriptsByPhase = [:]
+        paramsByPhase = [:]
+        diagnostics = []
+        resultsByPhase = [:]
+        ranScriptByPhase = [:]
+        logs = []
+        auditEvents = []
+        auditTrail = []
+        plannedActions = [:]
+        plannedActionsPhase = nil
+        approvals = []
+        appliedPlan = [:]
+        selectedRepo = nil
+        writeArmed = false
+        quotaText = nil
+        loadGoldenRecipe()
+        statusLine = "New job — fresh workspace (settings kept)"
+        saveNow()
+    }
+
     func clearResults() {
         resultsByPhase[phase] = []
         ranScriptByPhase[phase] = nil

@@ -33,6 +33,15 @@ struct BulkGitHubApp: App {
                     }
                 }
         }
+        .commands {
+            // Single-workspace app: ⌘N starts a fresh job (after
+            // confirmation in MainView), not a new window.
+            CommandGroup(replacing: .newItem) {
+                Button("New Job…") { model.requestNewJob() }
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(model.running || model.generating || model.validating)
+            }
+        }
 
         Settings {
             SettingsView()
