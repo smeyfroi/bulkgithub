@@ -8,19 +8,19 @@ A native macOS workbench for finding — and bulk-updating — repositories
 across a GitHub organisation. You describe what you want in natural language;
 an LLM writes a **TypeScript script** against a small, typed host API; the app
 type-checks the script, shows it for review, and executes it in a sandboxed
-JavaScriptCore context wired to capability handles (check scripts get a
+JavaScriptCore context wired to capability handles (find scripts get a
 read-only handle — the write surface does not exist on it).
 
-**1 — Check** (read-only): describe what to find, review the generated script,
+**1 — Find** (read-only): describe what to find, review the generated script,
 run it; matches are verified deterministically and shown in situ.
 
-![Check phase: prompt, generated script, per-repo results, and verified evidence in situ](screenshot-check.jpeg)
+![Find phase: prompt, generated script, per-repo results, and verified evidence in situ](screenshot-check.jpeg)
 
-**2 — Update** (dry run by default): the check results carry into the funnel;
+**2 — Update** (dry run by default): the find results carry into the funnel;
 the dry run records a reviewable plan with native diffs. The Dry Run | Write
 toggle arms real writes only after you've reviewed the plan.
 
-![Update phase: the check → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.jpeg)
+![Update phase: the find → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.jpeg)
 
 **3 — Merge** (registry-scoped): approve the PRs the job created — each
 approval pins the head SHA — then a merge script squash-merges them and
@@ -57,6 +57,44 @@ generate → type-check → review → run loop works offline against a canned
 7-repo organisation. Flip to live GitHub / Anthropic in Settings (⌘,) once
 credentials are stored (Keychain only; scripts can never read them).
 
+## Worked example — fully offline
+
+The fixtures model a 7-repo organisation ("example-org") whose READMEs are
+in assorted states, so the whole loop runs with no credentials and nothing
+real at stake. The three screenshots above follow exactly this script.
+
+**Find (⌘1).** Load **Find file missing a string** from the recipe library —
+or type the prompt `find repos where the file README.md does not contain
+"# License"` and press Generate; the mock LLM returns the same script. The
+param overrides show `path: README.md` and `marker: # License`. Run:
+
+- **3 matches** — web-frontend, data-pipeline, and docs-site lack the section
+- api-service is skipped (already has it), legacy-batch (archived),
+  infra-tools (no README at all)
+- flaky-service **fails** with a simulated network error — one bad repo
+  never kills a run
+
+Select a match to inspect the fetched README as evidence.
+
+**Update (⌘2).** Load **Add section to file**. **Dry Run** records a
+reviewable plan instead of writing: each matched repo gets a branch, a
+README edit, and a PR, all synthesized — the before/after diff is in the
+right panel (docs-site's is the easiest read). To confine the first real
+run to one repo, put it in the canary field.
+
+To apply the plan (in fixture mode, "real" writes go to the stateful
+in-memory org): flip **Dry Run | Write** to Write, press **Apply…**, choose
+the repos, and confirm. The created branches and PRs land in the job's
+artifact registry, and write mode snaps back to Dry Run.
+
+**Merge (⌘3).** The table lists the job's PRs from the registry. Approve
+them — each approval pins the PR's head SHA — then load **Merge approved
+PRs**, Dry Run to review the merge plan, and Write → Apply… to squash-merge
+and delete the branches. Consumed artifacts leave the registry; the Audit
+tab keeps the cumulative trail of everything the job did.
+
+**File > New Job (⌘N)** resets the workspace for the next campaign.
+
 ## Layout
 
 | Path | What it is |
@@ -72,8 +110,8 @@ credentials are stored (Keychain only; scripts can never read them).
 Generated scripts never see the network, the filesystem, or credentials —
 only the typed host API, and that surface is phase-gated:
 
-- **Check** scripts get a read-only handle. The write surface does not exist
-  on it: a check script calling a write fails the type-check, and the methods
+- **Find** scripts get a read-only handle. The write surface does not exist
+  on it: a find script calling a write fails the type-check, and the methods
   don't exist at runtime either.
 - **Update** scripts run against a **recording write surface** by default:
   createBranch / putContent / createPR record `PlannedAction`s and return
