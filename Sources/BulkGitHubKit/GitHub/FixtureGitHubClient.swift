@@ -320,10 +320,10 @@ extension FixtureGitHubClient {
         stack: production
         """
 
-        // The keypair worked example (plan v2, update phases): the string to
-        // find — and later delete line-wise — appears once in YAML and once in
-        // JSON with the key-value pair LAST in its object, so the future
-        // deletion must also strip the trailing comma on the line above.
+        // The keypair worked example (plan v2): the string to find — and
+        // delete line-wise — appears once in YAML and once in JSON with the
+        // key-value pair LAST in its object, so the deletion must also strip
+        // the trailing comma on the line above.
         let keypairYAML = """
         region: eu-west-1
         keyPair: ec2-shell-prod-eu-west-1-keypair-1

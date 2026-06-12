@@ -233,14 +233,14 @@ public struct Diagnostic: Sendable, Hashable, Identifiable {
 // MARK: - Execution plans (dry-run updates)
 
 /// One recorded write from an update script's dry run. Nothing reaches
-/// GitHub in phase 3: the recording handle synthesizes plausible responses
-/// and accumulates these for native review.
+/// GitHub during a dry run: the recording handle synthesizes plausible
+/// responses and accumulates these for native review.
 public enum PlannedAction: Codable, Hashable, Sendable {
     case createBranch(name: String, fromSha: String)
     case putContent(path: String, branch: String, message: String,
                     before: String?, after: String)
     case createPR(headRef: String, title: String, body: String)
-    // Merge phase (phase 5): these operate only on the job's own artifacts.
+    // Merge phase: these operate only on the job's own artifacts.
     case mergePR(number: Int, expectedHeadSha: String)
     case closePR(number: Int)
     case deleteBranch(name: String)
@@ -285,9 +285,9 @@ public struct Approval: Codable, Hashable, Sendable, Identifiable {
 // MARK: - Artifacts (armed runs)
 
 /// Something an armed run actually created on the remote. The registry is the
-/// boundary of later phases' authority: merge and cancel operate ONLY on
-/// artifacts this job created — the app can never touch a branch or PR it
-/// doesn't hold a receipt for.
+/// boundary of merge/cancel authority: those operate ONLY on artifacts this
+/// job created — the app can never touch a branch or PR it doesn't hold a
+/// receipt for.
 public struct Artifact: Codable, Hashable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable {
         case branch
@@ -364,9 +364,6 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var syncSliceSeconds: Double = 2.0
     public var maxSyncBudgetSeconds: Double = 60.0
     public var maxRunSeconds: Double = 900
-    public var confirmBeforePRs: Bool = true
-    public var confirmBeforeCancel: Bool = true
-    public var saveHistoryOnQuit: Bool = true
 
     public init() {}
 }

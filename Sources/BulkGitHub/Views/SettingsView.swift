@@ -66,7 +66,7 @@ struct GitHubSettingsTab: View {
                 }
             }
 
-            Text("Phase 1 is read-only: the token needs repository metadata and content read access. Write scopes come with the update phases.")
+            Text("Check scripts need repository metadata and content read access. Applying updates and merging PRs also needs content and pull-request write access (the classic repo scope, or a fine-grained equivalent).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -163,7 +163,7 @@ struct AISettingsTab: View {
                 }
             }
 
-            Text("Phase 1 generates check scripts only. The system prompt carries the host API declaration and the house rules; generated scripts are always type-checked and shown for review before they can run.")
+            Text("The system prompt carries the host API declaration and the house rules; generated scripts are always type-checked and shown for review before they can run.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -203,13 +203,6 @@ struct BehaviorSettingsTab: View {
             Stepper("Script sync budget: \(Int(model.settings.maxSyncBudgetSeconds))s",
                     value: $model.settings.maxSyncBudgetSeconds, in: 10...600, step: 10)
                 .help("Total synchronous JavaScript execution allowed per run (watchdog)")
-
-            Section("Update phases (later)") {
-                Toggle("Confirm before opening PRs", isOn: $model.settings.confirmBeforePRs)
-                Toggle("Confirm before cancelling PRs or deleting branches",
-                       isOn: $model.settings.confirmBeforeCancel)
-                Toggle("Save run history on quit", isOn: $model.settings.saveHistoryOnQuit)
-            }
         }
         .formStyle(.grouped)
         .onDisappear { model.saveNow() }

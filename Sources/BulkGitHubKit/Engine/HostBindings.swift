@@ -507,7 +507,7 @@ enum HostBindings {
                      forKeyedSubscript: "createPR" as NSString)
     }
 
-    // MARK: - Merge surface (phase 5, registry-scoped)
+    // MARK: - Merge surface (registry-scoped)
 
     /// The merge-phase surface. EVERYTHING here is scoped to the job's
     /// artifact registry — a merge script cannot touch a PR or branch the

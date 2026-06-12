@@ -50,8 +50,7 @@ struct DetailPane: View {
                     }
 
                     // The artifact registry for this repo: what armed runs
-                    // actually created. Merge/cancel in later phases operate
-                    // only on these.
+                    // actually created. Merge/cancel operates only on these.
                     let repoArtifacts = model.artifacts.filter { $0.repo == result.id }
                     if !repoArtifacts.isEmpty {
                         ArtifactsView(artifacts: repoArtifacts)

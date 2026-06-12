@@ -55,7 +55,7 @@ final class AppModel {
         plannedActionsPhase == phase ? plannedActions : [:]
     }
     /// Remote objects armed runs of this job created (the artifact registry —
-    /// later phases' merge/cancel operate only on these).
+    /// merge/cancel operates only on these).
     var artifacts: [Artifact] = []
     /// Per-PR merge approvals, capturing the head SHA approved. Merging
     /// requires the head to still match — host-enforced.

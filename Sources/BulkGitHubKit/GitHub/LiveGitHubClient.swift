@@ -2,10 +2,9 @@ import Foundation
 
 /// URLSession-backed GitHub REST client.
 ///
-/// Written for phase 1 completeness but not yet exercised: the app defaults to
-/// fixture mode, and no automated test performs live calls (plan v2: no live
-/// GitHub integration until the user confirms). The token is supplied by a
-/// provider closure so it stays in Keychain and never enters script space.
+/// The app defaults to fixture mode and no automated test performs live
+/// calls. The token is supplied by a provider closure so it stays in
+/// Keychain and never enters script space.
 public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     public typealias TokenProvider = @Sendable () -> String?
 

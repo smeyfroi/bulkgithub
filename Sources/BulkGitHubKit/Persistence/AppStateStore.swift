@@ -12,9 +12,9 @@ public struct AppStateSnapshot: Codable, Sendable {
     }
 }
 
-/// JSON-file persistence for phase 1 (one active job). The plan allows
-/// SwiftData/SQLite when the model grows (saved jobs, run history, artifact
-/// registry); this store is deliberately small and swappable.
+/// JSON-file persistence for a single active job. Deliberately small and
+/// swappable (SwiftData/SQLite if the model grows to saved jobs and run
+/// history).
 public final class AppStateStore: @unchecked Sendable {
     private let fileURL: URL
 

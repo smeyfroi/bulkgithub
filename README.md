@@ -4,7 +4,7 @@
 
 # BulkGitHub
 
-A native macOS workbench for finding — and later bulk-updating — repositories
+A native macOS workbench for finding — and bulk-updating — repositories
 across a GitHub organisation. You describe what you want in natural language;
 an LLM writes a **TypeScript script** against a small, typed host API; the app
 type-checks the script, shows it for review, and executes it in a sandboxed
@@ -67,78 +67,41 @@ credentials are stored (Keychain only; scripts can never read them).
 | `Tests/BulkGitHubKitTests` | Host-bridge contract tests, tsc-in-JSC spike tests, golden-recipe end-to-end, persistence |
 | `plans/`, `decisions/` | Plan v2 (current), superseded v1, ADR 0001 |
 
-## Phase 1 status (per plan v2)
+## Safety model
 
-- [x] SwiftPM scaffold, SwiftUI shell, app icon
-- [x] Settings window with Keychain-backed credentials + connection tests
-- [x] Core models (jobs, results, evidence, audit events, settings)
-- [x] JSC engine: promise bridging, watchdog, cancellation, concurrency limiter
-- [x] Read-only capability handle (`gh`/`job`/`parse`); evidence-receipt rule enforced
-- [x] `bulkgh.d.ts` v1 (check-phase surface)
-- [x] Validation pipeline incl. tsc-in-JSC; golden recipe; fixture GitHub client
-- [x] Mock LLM (offline) + Anthropic client (live generation, off by default)
-- [x] Persistence and restore-on-launch
-- [x] Tests; CI + release workflow skeletons
-- [x] Live GitHub/Anthropic exercised end-to-end (check phase verified against
-      a real organisation, June 2026; live update dry-runs next)
+Generated scripts never see the network, the filesystem, or credentials —
+only the typed host API, and that surface is phase-gated:
 
-## Phase 3 status (dry-run updates)
+- **Check** scripts get a read-only handle. The write surface does not exist
+  on it: a check script calling a write fails the type-check, and the methods
+  don't exist at runtime either.
+- **Update** scripts run against a **recording write surface** by default:
+  createBranch / putContent / createPR record `PlannedAction`s and return
+  synthesized responses — nothing reaches GitHub. The plan is reviewed as
+  per-repo action lists with native before/after diffs. Arming real writes
+  (the Apply… sheet: per-repo selection with the canary preselected, explicit
+  target statement, destructive-styled confirm) re-runs the same reviewed
+  script gated in order by repo selection, **plan conformance** (every write
+  must be exactly the next reviewed action), a **drift guard** (the remote
+  file must still match the reviewed "before" AND the script must produce the
+  reviewed "after"), idempotency (an existing branch/PR halts the repo, no
+  duplicates), and the `bulkgh/` branch-name prefix. A partially-applied repo
+  halts safely and is completed by re-running Apply — resume is gated by the
+  artifact registry.
+- **Merge** scripts are registry-scoped (`bulkgh.merge.d.ts`): `listJobPRs` /
+  `mergePR` / `closePR` / `deleteBranch` can only touch branches and PRs THIS
+  job created. Merging additionally requires a per-PR approval that pins the
+  head SHA — the head must still match at merge time (host-enforced in
+  dry-run too, so drift surfaces at review) — and merges are squash-only with
+  GitHub's own `sha` precondition. The cancel recipe closes job PRs and
+  deletes job branches.
 
-- [x] Update-phase scripts with a **recording write surface**: createBranch /
-      putContent / createPR record `PlannedAction`s and return synthesized
-      responses — nothing reaches GitHub
-- [x] Phase-gated declarations: `bulkgh.update.d.ts` merges the write surface
-      in only for update scripts; a check script calling a write fails the
-      type-check (and the methods don't exist at runtime either)
-- [x] Branch guardrail: only `bulkgh/`-prefixed branch names, enforced in dry-run
-- [x] Execution-plan review: per-repo action lists with native before/after
-      diffs in the detail pane
-- [x] Worked example shipped: `remove_line_with_string` recipe deletes lines
-      containing a string, repairing JSON trailing commas when the removed
-      key-value pair was last in its object
-- [x] Repo selection + write arming (phase 4, with the guarded live handle)
-
-## Phase 4 status (write mode)
-
-- [x] Guarded write handle: the same reviewed script re-runs unchanged with
-      writes armed, gated in order by repo selection, conformance with the
-      reviewed dry-run plan (every write must be exactly the next reviewed
-      action), a **drift guard** (the remote file must still match the
-      reviewed "before" AND the script must produce the reviewed "after"),
-      and idempotency (existing branch/PR halts the repo, no duplicates)
-- [x] Arming flow: "Apply…" sheet with per-repo selection (canary
-      preselected), explicit target statement, destructive-styled confirm
-- [x] Mode is always visible: DRY RUN / ARMED banner over the update
-      workspace, ARMED chip in the footer, "Dry Run" toolbar label
-- [x] Artifact registry: branches and PRs created by armed runs are recorded
-      on the job (with links) — later phases' merge/cancel operate only on
-      these
-- [x] Kill switch (`LiveGitHubClient.liveWritesEnabled`): v0.3.0 shipped
-      provably inert; **0.4.0 flips it on** after the full loop was rehearsed
-      offline with every guard exercised. Reverting to an inert build is a
-      one-line change. Live writes are reachable only through the engine's
-      armed bindings, behind the Apply sheet's explicit confirmation, which
-      states in red that writes go to live GitHub
-- [ ] Resume semantics for partially-applied repos (currently: halt safely;
-      "Cancel job" is the clean-up path)
-
-## Phase 5 status (guarded merge and cancel)
-
-- [x] Registry-scoped merge surface (`bulkgh.merge.d.ts`): `listJobPRs` /
-      `mergePR` / `closePR` / `deleteBranch` exist only for merge-phase
-      scripts and can only touch branches and PRs THIS job created
-- [x] Approval queue: per-PR approval in the merge table captures the head
-      SHA; merging requires the approval AND that the head still matches —
-      an approval is for a specific state of the branch (host-enforced in
-      dry-run too, so drift surfaces at review time)
-- [x] Squash merges only, with GitHub's own `sha` precondition on the live
-      client; cancel flow closes job PRs and deletes job branches
-- [x] Merge scripts dry-run by default like updates: reviewable plan, then
-      the same Apply… arming flow; consumed artifacts leave the registry
-- [x] Recipes: "Merge approved PRs" and "Cancel job"; full loop rehearsed
-      offline — check → update → apply → approve → merge/cancel — against
-      the stateful fixture client
-- [x] Live merge writes (same kill switch as phase 4; enabled in 0.4.0)
+Branches and PRs created by armed runs are recorded on the job as the
+**artifact registry** — the boundary of merge/cancel authority. The mode is
+always visible (DRY RUN / ARMED banner, ARMED footer chip), and a kill switch
+(`LiveGitHubClient.liveWritesEnabled`) turns a build provably inert in one
+line; live writes are reachable only through the engine's armed bindings,
+behind the Apply sheet's red confirmation.
 
 ## License
 

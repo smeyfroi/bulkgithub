@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BulkGitHubKit
 
-/// Phase 5 against fixtures: the registry-scoped merge surface, the approval
+/// Against fixtures: the registry-scoped merge surface, the approval
 /// requirement, the head-SHA precondition, and the cancel flow. Completes the
 /// loop: check → update → apply → approve → merge/cancel, all offline.
 @Suite("Merge phase (registry-scoped, approval-gated)")

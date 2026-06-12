@@ -7,8 +7,8 @@ public enum GitHubClientError: Error, LocalizedError, Equatable {
     case network(String)
     case missingCredentials
     case invalidResponse(String)
-    /// Live GitHub writes are compiled out for now: the armed workflow is
-    /// exercised against fixture data until it has been shaken down.
+    /// Thrown when the live-writes kill switch
+    /// (LiveGitHubClient.liveWritesEnabled) is off.
     case writesDisabled
 
     public var errorDescription: String? {
@@ -26,8 +26,8 @@ public enum GitHubClientError: Error, LocalizedError, Equatable {
     }
 }
 
-/// The read surface used by check-phase scripts. Write operations arrive with
-/// the update/merge phases (plan v2, phases 3-5) and will extend this protocol.
+/// The full GitHub surface: reads used by check-phase scripts, plus the
+/// write/merge operations reachable only through the engine's armed bindings.
 public protocol GitHubClient: Sendable {
     func listOrgRepos(org: String) async throws -> [RepoRef]
     /// One repository's metadata — the authoritative source for defaultBranch.
@@ -46,7 +46,7 @@ public protocol GitHubClient: Sendable {
     func listPRs(repo: String, head: String?, state: String) async throws -> [PullRequestRef]
     func searchPRs(org: String, query: String) async throws -> [PullRequestRef]
 
-    // MARK: Writes (phase 4) — reached only through the engine's armed
+    // MARK: Writes (update phase) — reached only through the engine's armed
     // bindings, which enforce repo selection, plan conformance, the drift
     // guard, and the bulkgh/ branch prefix before any of these is called.
 
@@ -59,7 +59,7 @@ public protocol GitHubClient: Sendable {
     func createPR(repo: String, head: String, base: String,
                   title: String, body: String) async throws -> PullRequestRef
 
-    // MARK: Merge phase (phase 5) — the engine's merge bindings restrict
+    // MARK: Merge phase — the engine's merge bindings restrict
     // these to the job's own artifact registry before any call is made.
 
     /// One PR's current state (read — used for approvals and preconditions).

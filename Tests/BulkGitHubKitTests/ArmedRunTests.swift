@@ -2,10 +2,10 @@ import Foundation
 import Testing
 @testable import BulkGitHubKit
 
-/// Phase 4: the guarded live handle, exercised entirely against fixtures.
-/// Live GitHub writes are hard-disabled at the client; these tests prove the
-/// arming workflow end to end — dry run, review, armed apply — including the
-/// drift guard, plan conformance, repo selection, and idempotency.
+/// The guarded live handle, exercised entirely against fixtures. These tests
+/// prove the arming workflow end to end — dry run, review, armed apply —
+/// including the drift guard, plan conformance, repo selection, and
+/// idempotency.
 @Suite("Armed runs (guarded writes)")
 struct ArmedRunTests {
 
