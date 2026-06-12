@@ -20,6 +20,10 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
             if prompt.range(of: "marker", options: .caseInsensitive) != nil {
                 return try markerDeletionScript(for: prompt)
             }
+            if prompt.range(of: #"\bchange\b|\bfrom\b.+\bto\b"#,
+                            options: [.regularExpression, .caseInsensitive]) != nil {
+                return try changeValueScript(for: prompt)
+            }
             return try lineRemovalScript(for: prompt)
         case .merge:
             let recipe = prompt.range(of: "cancel", options: .caseInsensitive) != nil
@@ -59,6 +63,29 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         }
         if let value = firstMatch(in: prompt, pattern: #"value\s+(?:of\s+|is\s+)?["']([^"']+)["']"#) {
             script = Self.replaceParam(in: script, name: "value", value: value)
+        }
+        return script
+    }
+
+    private func changeValueScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "change_yaml_value") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let key = firstMatch(in: prompt, pattern: #"(?:value of|key)\s+["']([A-Za-z0-9_.-]+)["']"#) {
+            script = Self.replaceParam(in: script, name: "key", value: key)
+        }
+        if let from = firstMatch(in: prompt, pattern: #"from\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "from", value: from)
+        }
+        if let to = firstMatch(in: prompt, pattern: #"to\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "to", value: to)
+        }
+        // Glob needs a path-ish shape ("/" or "*") — "in yaml files" is prose.
+        if let glob = firstMatch(in: prompt, pattern: #"(?:in|under)\s+([\w.-]*[/*][\w./*-]*)"#) {
+            script = Self.replaceParam(in: script, name: "glob", value: glob)
+        }
+        if let title = firstMatch(in: prompt, pattern: #"pull request title:\s*"([^"]+)""#) {
+            script = Self.replaceParam(in: script, name: "prTitle", value: title)
         }
         return script
     }

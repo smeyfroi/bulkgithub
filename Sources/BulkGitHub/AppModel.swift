@@ -483,7 +483,7 @@ final class AppModel {
         writeArmed = false
         switch newPhase {
         case .check:
-            statusLine = "Check phase — prompts generate read-only search scripts"
+            statusLine = "Find phase — prompts generate read-only search scripts"
         case .update:
             statusLine = "Update phase — prompts generate dry-run update scripts (nothing reaches GitHub)"
         case .merge:
@@ -868,7 +868,7 @@ final class AppModel {
         let mode = writeMode == .armed ? "ARMED"
             : (runPhase == .check ? "read-only" : "dry run")
         auditTrail.append(AuditEvent(kind: "run", repo: nil,
-                                     detail: "\(runPhase.rawValue) (\(mode), \(settings.useFixtureGitHub ? "fixture" : "live")) — \(outcome.status.label)"))
+                                     detail: "\(runPhase.displayName.lowercased()) (\(mode), \(settings.useFixtureGitHub ? "fixture" : "live")) — \(outcome.status.label)"))
         auditTrail.append(contentsOf: outcome.auditEvents)
         if auditTrail.count > 5000 {
             auditTrail.removeFirst(auditTrail.count - 5000)

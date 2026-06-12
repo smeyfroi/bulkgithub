@@ -245,7 +245,7 @@ struct SupportingFeatureTests {
 
     @Test("every catalog recipe resolves and declares its advertised phase")
     func catalogConsistency() throws {
-        #expect(RecipeCatalog.all.count == 9)
+        #expect(RecipeCatalog.all.count == 10)
         for recipe in RecipeCatalog.all {
             let source = try #require(recipe.source, "missing source for \(recipe.id)")
             #expect(ValidationPipeline.sniffPhase(from: source) == recipe.phase,

@@ -431,6 +431,49 @@ struct CatalogRecipeTests {
         #expect(webEdits == ["window: nightly\nnotify: ops"])
     }
 
+    @Test("change-value dry run rewrites the line, preserving everything else")
+    func changeValueDryRun() async throws {
+        let recipe = try #require(ResourceLocator.recipe(named: "change_yaml_value"))
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: recipe)
+        #expect(validated.meta.phase == .update)
+
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: validated.meta.phase,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "example-org",
+                                               onEvent: { _ in })
+        #expect(outcome.status == .completed)
+
+        var statusByRepo: [String: RepoStatus] = [:]
+        for result in outcome.results { statusByRepo[result.id] = result.status }
+        #expect(statusByRepo["example-org/api-service"] == .planned)    // top-level 14
+        #expect(statusByRepo["example-org/data-pipeline"] == .planned)  // nested 14 in .template
+        #expect(statusByRepo["example-org/web-frontend"] == .skipped)   // has 30, not 14
+        #expect(statusByRepo["example-org/legacy-batch"] == .skipped)   // archived
+        #expect(statusByRepo["example-org/flaky-service"] == .failed)
+
+        let apiActions = try #require(outcome.plannedActions["example-org/api-service"])
+        guard case .putContent(let path, _, _, _, let after) = apiActions[1] else {
+            Issue.record("expected putContent second"); return
+        }
+        #expect(path == "deploy/logging.yml")
+        #expect(after == "logGroup: app\nRetentionInDays: 30")
+
+        // The .template edit touches ONLY the value line: indentation kept,
+        // CloudFormation tags untouched.
+        let pipelineEdits = try #require(outcome.plannedActions["example-org/data-pipeline"])
+            .compactMap { action -> String? in
+                guard case .putContent(_, _, _, _, let after) = action else { return nil }
+                return after
+            }
+        let templateAfter = try #require(pipelineEdits.first)
+        #expect(templateAfter.contains("      RetentionInDays: 30"))
+        #expect(!templateAfter.contains("RetentionInDays: 14"))
+        #expect(templateAfter.contains("!GetAtt"))
+    }
+
     @Test("catalog prompts route through the mock LLM with params patched")
     func mockRouting() async throws {
         let yaml = try await MockLLMClient().makeScript(
@@ -454,5 +497,14 @@ struct CatalogRecipeTests {
         #expect(marker.contains("startMarker: \"# >>>\""))
         #expect(marker.contains("endMarker: \"# <<<\""))
         #expect(ValidationPipeline.sniffPhase(from: marker) == .update)
+
+        let change = try await MockLLMClient().makeScript(
+            prompt: "change the value of \"RetentionInDays\" from \"14\" to \"30\" in yaml files under deploy/**",
+            context: ScriptGenerationContext(organisation: "example-org", phase: .update))
+        #expect(change.contains("key: \"RetentionInDays\""))
+        #expect(change.contains("from: \"14\""))
+        #expect(change.contains("to: \"30\""))
+        #expect(change.contains("glob: \"deploy/**\""))
+        #expect(ValidationPipeline.sniffPhase(from: change) == .update)
     }
 }

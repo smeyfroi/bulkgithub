@@ -86,7 +86,7 @@ struct DetailPane: View {
             ContentUnavailableView(
                 "No repository selected",
                 systemImage: "square.dashed",
-                description: Text("Run a check, then select a repository to inspect its evidence.")
+                description: Text("Run a find script, then select a repository to inspect its evidence.")
             )
         }
     }

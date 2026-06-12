@@ -181,7 +181,7 @@ struct MainView: View {
             return "Apply the reviewed plan: choose repositories and confirm — this writes"
         }
         return model.phase == .check
-            ? "Validate and run the script (check phase is read-only)"
+            ? "Validate and run the script (the find phase is read-only)"
             : "Run the script in dry-run mode — writes are recorded as a reviewable plan, nothing is written"
     }
 }
@@ -287,7 +287,7 @@ struct SidebarView: View {
         let busy = model.running || model.generating
         List(selection: phaseSelection) {
             Section("Job phases") {
-                Label("Check", systemImage: "magnifyingglass")
+                Label("Find", systemImage: "magnifyingglass")
                     .tag(JobPhase.check)
                     .help("Prompts generate read-only search scripts")
                     .selectionDisabled(busy)
@@ -346,7 +346,7 @@ struct SidebarView: View {
                                 }
                             }
                         } label: {
-                            Text(phase.rawValue.capitalized)
+                            Text(phase.displayName)
                                 .font(.callout.weight(.medium))
                                 .foregroundStyle(.secondary)
                         }

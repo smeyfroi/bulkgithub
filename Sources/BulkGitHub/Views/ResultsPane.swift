@@ -145,11 +145,11 @@ struct ResultsPane: View {
     private var updateTable: some View {
         @Bindable var model = model
         return Table(model.updateRows, selection: runSafeSelection) {
-            TableColumn("Check") { (row: AppModel.UpdateRow) in
+            TableColumn("Find") { (row: AppModel.UpdateRow) in
                 if let check = row.check {
                     StatusBadge(status: check.status)
                         .opacity(0.6)
-                        .help("Verdict from the last check run")
+                        .help("Verdict from the last find run")
                 } else {
                     Text("—")
                         .foregroundStyle(.tertiary)

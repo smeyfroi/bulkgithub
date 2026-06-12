@@ -115,6 +115,17 @@ public enum JobPhase: String, Codable, Sendable, CaseIterable {
     case check
     case update
     case merge
+
+    /// User-facing phase name. The contract keeps "check" as the rawValue —
+    /// meta.phase in scripts, persistence keys, and the LLM prompt all use
+    /// it — but the UI calls the phase "Find".
+    public var displayName: String {
+        switch self {
+        case .check: return "Find"
+        case .update: return "Update"
+        case .merge: return "Merge"
+        }
+    }
 }
 
 public struct AuditEvent: Codable, Hashable, Sendable, Identifiable {

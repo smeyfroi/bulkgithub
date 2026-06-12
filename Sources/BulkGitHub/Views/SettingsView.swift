@@ -66,7 +66,7 @@ struct GitHubSettingsTab: View {
                 }
             }
 
-            Text("Check scripts need repository metadata and content read access. Applying updates and merging PRs also needs content and pull-request write access (the classic repo scope, or a fine-grained equivalent).")
+            Text("Find scripts need repository metadata and content read access. Applying updates and merging PRs also needs content and pull-request write access (the classic repo scope, or a fine-grained equivalent).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
