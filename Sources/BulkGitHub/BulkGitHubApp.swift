@@ -51,6 +51,20 @@ struct BulkGitHubApp: App {
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(model.running || model.generating || model.scriptText.isEmpty)
             }
+            // The flow bar's menu home (every control needs one): phase
+            // switching from the View menu, Mail/Finder-style.
+            CommandGroup(after: .toolbar) {
+                Button("Find Phase") { model.setPhase(.check) }
+                    .keyboardShortcut("1", modifiers: .command)
+                    .disabled(model.running || model.generating)
+                Button("Update Phase") { model.setPhase(.update) }
+                    .keyboardShortcut("2", modifiers: .command)
+                    .disabled(model.running || model.generating)
+                Button("Merge Phase") { model.setPhase(.merge) }
+                    .keyboardShortcut("3", modifiers: .command)
+                    .disabled(model.running || model.generating)
+                Divider()
+            }
         }
 
         Settings {

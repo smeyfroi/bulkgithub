@@ -472,6 +472,16 @@ final class AppModel {
         statusLine = "Canary set — update runs are confined to \(repoID)"
     }
 
+    // MARK: Flow bar badges — what each stage has produced
+
+    var matchedCount: Int {
+        (resultsByPhase[.check] ?? []).filter { $0.status == .verifiedMatch }.count
+    }
+    var plannedRepoCount: Int {
+        plannedActionsPhase == .update ? plannedActions.count : 0
+    }
+    var registryPRCount: Int { mergeRows.count }
+
     func setPhase(_ newPhase: JobPhase) {
         guard newPhase != phase, !running, !generating else { return }
         // Each phase is a separate workspace: prompt, script, and params swap

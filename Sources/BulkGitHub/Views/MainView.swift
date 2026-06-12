@@ -10,6 +10,9 @@ struct MainView: View {
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
         VStack(spacing: 0) {
+            // The workflow's spine: Find → Update → Merge as a full-width
+            // flow above the panes, not rows buried in the sidebar list.
+            PhaseFlowBar()
             // Deterministic three-pane tiling via HSplitView, NOT
             // NavigationSplitView: on macOS 26 the navigation sidebars are
             // glass panels floating over a full-width content layer, and the
@@ -275,32 +278,99 @@ struct ApplySheet: View {
     }
 }
 
-struct SidebarView: View {
+/// The Find → Update → Merge pipeline as a flow bar: every stage visible
+/// with its product count, the current one highlighted, arrows carrying the
+/// direction. Colour is the secondary cue (labels and symbols carry the
+/// meaning, per the HIG): Find blue, Update purple in dry run and red the
+/// moment writes are armed, Merge green — extending the app's existing
+/// dry-run/armed colour language.
+struct PhaseFlowBar: View {
     @Environment(AppModel.self) private var model
-    /// Recipe groups are collapsible; open by default for discoverability.
-    @State private var expandedGroups: Set<JobPhase> = Set(JobPhase.allCases)
 
     var body: some View {
         // Phase switching is locked while a run or generation is in flight —
         // swapping workspaces mid-action invites confusion (the run keeps
         // writing into the phase it started in).
         let busy = model.running || model.generating
-        List(selection: phaseSelection) {
-            Section("Job phases") {
-                Label("Find", systemImage: "magnifyingglass")
-                    .tag(JobPhase.check)
-                    .help("Prompts generate read-only search scripts")
-                    .selectionDisabled(busy)
-                Label("Update", systemImage: "pencil")
-                    .tag(JobPhase.update)
-                    .help("Generate update scripts — dry run by default; arm writes via Apply")
-                    .selectionDisabled(busy)
-                Label("Merge", systemImage: "arrow.triangle.merge")
-                    .tag(JobPhase.merge)
-                    .help("Approve job PRs, then merge scripts act on this job's artifacts only")
-                    .selectionDisabled(busy)
-            }
+        HStack(spacing: 8) {
+            stage(.check, label: "Find", systemImage: "magnifyingglass",
+                  badge: model.matchedCount,
+                  help: "Prompts generate read-only search scripts; matches feed Update")
+            arrow
+            stage(.update, label: "Update", systemImage: "pencil",
+                  badge: model.plannedRepoCount,
+                  help: "Update scripts dry-run into a reviewable plan; arm writes via Apply")
+            arrow
+            stage(.merge, label: "Merge", systemImage: "arrow.triangle.merge",
+                  badge: model.registryPRCount,
+                  help: "Approve job PRs, then merge scripts act on this job's artifacts only")
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.25))
+        .overlay(alignment: .bottom) { Divider() }
+        .disabled(busy)
+    }
 
+    private var arrow: some View {
+        Image(systemName: "arrow.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+    }
+
+    private func color(for phase: JobPhase) -> Color {
+        switch phase {
+        case .check: return .blue
+        case .update: return (model.writeArmed || model.currentRunIsArmed) ? .red : .purple
+        case .merge: return .green
+        }
+    }
+
+    private func stage(_ phase: JobPhase, label: String, systemImage: String,
+                       badge: Int, help: String) -> some View {
+        let isCurrent = model.phase == phase
+        let tint = color(for: phase)
+        return Button {
+            model.setPhase(phase)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.callout)
+                Text(label)
+                    .font(.callout.weight(isCurrent ? .semibold : .regular))
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(tint.opacity(0.18), in: Capsule())
+                        .foregroundStyle(tint)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(isCurrent ? AnyShapeStyle(tint.opacity(0.16)) : AnyShapeStyle(.clear),
+                        in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(isCurrent ? tint.opacity(0.7) : Color.secondary.opacity(0.25),
+                                       lineWidth: isCurrent ? 1.5 : 1)
+            )
+            .foregroundStyle(isCurrent ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+struct SidebarView: View {
+    @Environment(AppModel.self) private var model
+    /// Recipe groups are collapsible; open by default for discoverability.
+    @State private var expandedGroups: Set<JobPhase> = Set(JobPhase.allCases)
+
+    var body: some View {
+        let busy = model.running || model.generating
+        List {
             // The recipe LIBRARY is reference material, not navigation: it
             // lives under its own header, one collapsible group per phase,
             // with quieter styling so it doesn't compete with the workflow.
@@ -367,14 +437,6 @@ struct SidebarView: View {
         )
     }
 
-    private var phaseSelection: Binding<JobPhase?> {
-        Binding(
-            get: { model.phase },
-            set: { phase in
-                if let phase { model.setPhase(phase) }
-            }
-        )
-    }
 }
 
 /// Ambient environment status — deliberately out of the sidebar so it doesn't
