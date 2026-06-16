@@ -74,6 +74,11 @@ final class AppModel {
     var appliedPlan: [String: [PlannedAction]] = [:]
     var statusLine: String = "Ready"
     var running = false
+    /// True once the current run has enumerated repos (candidate rows). Drives
+    /// the determinate scan meter: it stays determinate from the first
+    /// candidate until the run ends, so the meter holds at 100% rather than
+    /// blinking back to a spinner the instant the last candidate resolves.
+    var runHadCandidates = false
     /// True while an ARMED run is executing — drives the loud mode banner.
     var currentRunIsArmed = false
     var showApplySheet = false
@@ -936,6 +941,7 @@ final class AppModel {
                              armedTargets: Set<String> = []) async {
         guard let validated = await validate() else { return }
         running = true
+        runHadCandidates = false
         currentRunIsArmed = (writeMode == .armed)
         defer {
             running = false
@@ -1122,6 +1128,7 @@ final class AppModel {
         case .progress(let line):
             logs.append("▸ \(line)")
         case .repo(let result):
+            if result.status == .candidate { runHadCandidates = true }
             var rows = resultsByPhase[runPhase] ?? []
             if let index = rows.firstIndex(where: { $0.id == result.id }) {
                 rows[index] = result

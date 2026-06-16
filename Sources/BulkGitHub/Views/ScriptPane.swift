@@ -83,7 +83,11 @@ struct ScriptPane: View {
                 // that reuses carried-over matches) fall back to the spinner.
                 let total = model.results.count
                 let processed = model.results.filter { $0.status != .candidate }.count
-                let scanning = model.running && model.results.contains { $0.status == .candidate }
+                // Stay determinate from the first candidate until the run ends
+                // (runHadCandidates), so the meter holds at 100% rather than
+                // blinking back to the spinner when the last candidate resolves
+                // while the run is still finishing.
+                let scanning = model.running && model.runHadCandidates
                 if scanning, total > 0 {
                     ProgressView(value: Double(processed), total: Double(total))
                         .controlSize(.small)

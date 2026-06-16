@@ -165,7 +165,12 @@ struct ResultsPane: View {
         } else {
             VStack(spacing: 0) {
                 let matched = model.results.filter { $0.status == .verifiedMatch }.count
-                TableHeaderStrip(text: "\(matched) matched of \(model.results.count) scanned") {
+                let failed = model.results.filter { $0.status == .failed }.count
+                // Account for failures too, so the count agrees with what the
+                // "Actionable" filter reveals (it keeps matches AND failures).
+                TableHeaderStrip(text: failed > 0
+                                    ? "\(matched) matched, \(failed) failed of \(model.results.count) scanned"
+                                    : "\(matched) matched of \(model.results.count) scanned") {
                     filterPicker(includeSelected: false)
                 }
                 Table(filtered(model.results), selection: runSafeSelection) {
