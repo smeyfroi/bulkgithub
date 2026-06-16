@@ -1,8 +1,21 @@
 import SwiftUI
 import BulkGitHubKit
 
+/// Row visibility filter for the results tables — lets a big funnel collapse
+/// to just what matters. `actionable` = matched (Find) / planned (Update);
+/// `selected` = checked to apply (Update, Write mode).
+enum RowFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case actionable = "Actionable"
+    case selected = "Selected"
+    var id: String { rawValue }
+}
+
 struct ResultsPane: View {
     @Environment(AppModel.self) private var model
+    /// View-local: which rows the tables show. Reset on phase change so a
+    /// filter that only makes sense in one phase doesn't leak into another.
+    @State private var rowFilter: RowFilter = .all
 
     /// Table selection that survives streaming updates. While a run is
     /// appending rows, the NSTableView-backed Table reloads and writes nil
@@ -36,6 +49,39 @@ struct ResultsPane: View {
             case .check:
                 checkTable
             }
+        }
+        .onChange(of: model.phase) { rowFilter = .all }
+    }
+
+    /// The filter control for a table header. Offers only the cases that make
+    /// sense for the phase (no "Selected" in Find).
+    private func filterPicker(includeSelected: Bool) -> some View {
+        Picker("Show", selection: $rowFilter) {
+            Text("All").tag(RowFilter.all)
+            Text("Actionable").tag(RowFilter.actionable)
+            if includeSelected {
+                Text("Selected").tag(RowFilter.selected)
+            }
+        }
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .labelsHidden()
+        .fixedSize()
+        .help("Filter which repositories the table shows")
+    }
+
+    /// Find-phase row filter: hide definitive non-matches.
+    private func filtered(_ results: [RepoResult]) -> [RepoResult] {
+        guard rowFilter != .all else { return results }
+        return results.filter { ![.skipped, .noMatch].contains($0.status) }
+    }
+
+    /// Update-phase row filter: planned-only, or checked-to-apply-only.
+    private func filtered(_ rows: [AppModel.UpdateRow]) -> [AppModel.UpdateRow] {
+        switch rowFilter {
+        case .all: return rows
+        case .actionable: return rows.filter { model.activePlan[$0.id] != nil }
+        case .selected: return rows.filter { model.applyTargets.contains($0.id) }
         }
     }
 
@@ -119,8 +165,10 @@ struct ResultsPane: View {
         } else {
             VStack(spacing: 0) {
                 let matched = model.results.filter { $0.status == .verifiedMatch }.count
-                TableHeaderStrip(text: "\(matched) matched of \(model.results.count) scanned")
-                Table(model.results, selection: runSafeSelection) {
+                TableHeaderStrip(text: "\(matched) matched of \(model.results.count) scanned") {
+                    filterPicker(includeSelected: false)
+                }
+                Table(filtered(model.results), selection: runSafeSelection) {
                     TableColumn("Status") { (result: RepoResult) in
                         StatusBadge(status: result.status)
                     }
@@ -174,9 +222,10 @@ struct ResultsPane: View {
                             .controlSize(.small)
                             .disabled(model.running || model.applyTargets.isEmpty)
                     }
+                    filterPicker(includeSelected: model.writeArmed || rowFilter == .selected)
                 }
 
-                Table(model.updateRows, selection: runSafeSelection) {
+                Table(filtered(model.updateRows), selection: runSafeSelection) {
                 TableColumn("Apply") { (row: AppModel.UpdateRow) in
                     let eligible = model.activePlan[row.id] != nil
                     Toggle("", isOn: Binding(
