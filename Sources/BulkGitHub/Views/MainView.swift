@@ -113,7 +113,8 @@ struct MainView: View {
                         // Generation streams into the editor, so running
                         // mid-generation would execute a truncated script.
                         .disabled(model.scriptText.isEmpty || model.validating || model.generating
-                                  || (model.writeArmed && !model.canArmWrites))
+                                  || (model.writeArmed && !model.canArmWrites)
+                                  || (model.writeArmed && model.applyTargets.isEmpty))
                     }
                 }
             }
@@ -200,9 +201,8 @@ struct MainView: View {
 struct ApplySheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: Set<String> = []
 
-    private var plannedRepos: [String] { model.activePlan.keys.sorted() }
+    private var count: Int { model.applyTargets.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -210,7 +210,7 @@ struct ApplySheet: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.red)
 
-            Text("The reviewed dry-run plan re-runs with writes enabled, for the selected repositories only. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
+            Text("The reviewed dry-run plan re-runs with writes enabled, for the \(count) repositor\(count == 1 ? "y" : "ies") you selected in the table. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -226,61 +226,23 @@ struct ApplySheet: View {
                     .foregroundStyle(.red)
             }
 
-            List(plannedRepos, id: \.self) { repo in
-                HStack {
-                    Toggle(isOn: binding(for: repo)) {
-                        HStack(spacing: 6) {
-                            Text(repo)
-                            if model.canaryRepo == repo {
-                                Image(systemName: "scope")
-                                    .foregroundStyle(.purple)
-                                    .help("Canary target")
-                            }
-                        }
-                    }
-                    Spacer()
-                    Text("\(model.activePlan[repo]?.count ?? 0) action(s)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(minHeight: 160)
-
             HStack {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(role: .destructive) {
-                    let repos = selected
+                    let repos = model.applyTargets
                     dismiss()
                     model.applyPlan(to: repos)
                 } label: {
-                    Label("Arm and apply to \(selected.count) repo\(selected.count == 1 ? "" : "s")",
+                    Label("Arm and apply to \(count) repo\(count == 1 ? "" : "s")",
                           systemImage: "bolt.fill")
                 }
-                .disabled(selected.isEmpty)
+                .disabled(model.applyTargets.isEmpty)
             }
         }
         .padding(16)
         .frame(width: 480)
-        .onAppear {
-            // Canary-first: preselect just the canary when it has a plan,
-            // otherwise everything planned.
-            if !model.canaryRepo.isEmpty, model.activePlan[model.canaryRepo] != nil {
-                selected = [model.canaryRepo]
-            } else {
-                selected = Set(plannedRepos)
-            }
-        }
-    }
-
-    private func binding(for repo: String) -> Binding<Bool> {
-        Binding(
-            get: { selected.contains(repo) },
-            set: { isOn in
-                if isOn { selected.insert(repo) } else { selected.remove(repo) }
-            }
-        )
     }
 }
 

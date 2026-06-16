@@ -77,6 +77,12 @@ final class AppModel {
     /// True while an ARMED run is executing — drives the loud mode banner.
     var currentRunIsArmed = false
     var showApplySheet = false
+    /// Which planned repos an armed run will target — the model-backed
+    /// selection the update table's checkbox column reads and writes, and the
+    /// Apply sheet confirms. Default-populated canary-first the moment a
+    /// dry-run plan lands; reset wherever writeArmed resets, since a selection
+    /// only makes sense against the plan it was built from. Never persisted.
+    var applyTargets: Set<String> = []
     /// The user-set write mode for the current phase: with it OFF, Run is a
     /// dry run; with it ON, Run applies the reviewed plan (via the
     /// confirmation sheet). Snaps back to dry run after every armed run and
@@ -88,6 +94,34 @@ final class AppModel {
     var canArmWrites: Bool {
         phase != .check && !activePlan.isEmpty && !resultsAreStale
     }
+
+    /// Repos eligible for an armed run: those the reviewed plan touches, in a
+    /// stable order for the header count and select-all.
+    var plannedRepoIDs: [String] { activePlan.keys.sorted() }
+
+    /// Default the apply selection canary-first: just the canary when it has a
+    /// plan, otherwise every planned repo. Called whenever a fresh plan lands;
+    /// the table's checkbox column and the Apply sheet read `applyTargets`.
+    func refreshApplyTargets() {
+        if !canaryRepo.isEmpty, activePlan[canaryRepo] != nil {
+            applyTargets = [canaryRepo]
+        } else {
+            applyTargets = Set(plannedRepoIDs)
+        }
+    }
+
+    /// Select every planned repo for the armed run.
+    func selectAllApplyTargets() { applyTargets = Set(plannedRepoIDs) }
+
+    /// Clear the armed-run selection (Apply then disables until one is chosen).
+    func deselectAllApplyTargets() { applyTargets.removeAll() }
+
+    /// Add or remove a repo from the armed-run selection.
+    func toggleApplyTarget(_ repoID: String) {
+        if applyTargets.contains(repoID) { applyTargets.remove(repoID) }
+        else { applyTargets.insert(repoID) }
+    }
+
     var generating = false
     var validating = false
     var selectedRepo: String?
@@ -422,6 +456,7 @@ final class AppModel {
         auditEvents = []
         auditTrail = []
         writeArmed = false
+        applyTargets = []
         statusLine = settings.useFixtureGitHub
             ? "Switched to fixture data — workflow state cleared, scripts kept"
             : "Switched to LIVE GitHub — workflow state cleared, scripts kept"
@@ -529,6 +564,7 @@ final class AppModel {
         appliedPlan = [:]
         selectedRepo = nil
         writeArmed = false
+        applyTargets = []
         quotaText = nil
     }
 
@@ -539,6 +575,7 @@ final class AppModel {
         if plannedActionsPhase == phase {
             plannedActions = [:]
             plannedActionsPhase = nil
+            applyTargets = []
         }
         selectedRepo = nil
         statusLine = "Results cleared"
@@ -570,6 +607,7 @@ final class AppModel {
         phase = newPhase
         restoreWorkspace()
         writeArmed = false
+        applyTargets = []
         switch newPhase {
         case .check:
             statusLine = "Find phase — prompts generate read-only search scripts"
@@ -600,6 +638,7 @@ final class AppModel {
             phase = recipe.phase
         }
         writeArmed = false
+        applyTargets = []
         scriptText = source
         prompt = recipe.prompt
         promptsByPhase[recipe.phase] = recipe.prompt
@@ -965,6 +1004,9 @@ final class AppModel {
         if runPhase != .check, writeMode == .dryRun {
             plannedActions = outcome.plannedActions
             plannedActionsPhase = outcome.plannedActions.isEmpty ? nil : runPhase
+            // The selection rides the plan: default it canary-first the moment
+            // the plan lands, so flipping to Write shows the right rows checked.
+            refreshApplyTargets()
         }
         // Replace rather than accumulate: re-applying after a halt (or in a
         // fresh fixture session) must not leave duplicate receipts for the

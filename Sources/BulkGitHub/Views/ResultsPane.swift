@@ -125,7 +125,7 @@ struct ResultsPane: View {
             TableColumn("Repository") { (result: RepoResult) in
                 RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
             }
-            .width(min: 140, ideal: 210)
+            .width(min: 140, ideal: 210, max: 300)
 
             TableColumn("Branch") { (result: RepoResult) in
                 Text(result.repo.defaultBranch)
@@ -144,49 +144,92 @@ struct ResultsPane: View {
 
     private var updateTable: some View {
         @Bindable var model = model
-        return Table(model.updateRows, selection: runSafeSelection) {
-            TableColumn("Find") { (row: AppModel.UpdateRow) in
-                if let check = row.check {
-                    StatusBadge(status: check.status)
-                        .opacity(0.6)
-                        .help("Verdict from the last find run")
-                } else {
-                    Text("—")
-                        .foregroundStyle(.tertiary)
+        return VStack(spacing: 0) {
+            // The arming-selection strip — mirrors the merge approval queue:
+            // visible only once Write is armed, since the checkbox column it
+            // governs only appears then. Count is over eligible (planned) repos.
+            if model.writeArmed {
+                let selectedCount = model.applyTargets.count
+                let plannedCount = model.plannedRepoIDs.count
+                HStack(spacing: 12) {
+                    Text("\(selectedCount) of \(plannedCount) repo(s) selected to apply")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Select all") { model.selectAllApplyTargets() }
+                        .controlSize(.small)
+                        .disabled(model.running || selectedCount == plannedCount)
+                    Button("Deselect all") { model.deselectAllApplyTargets() }
+                        .controlSize(.small)
+                        .disabled(model.running || selectedCount == 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .overlay(alignment: .bottom) { Divider() }
+            }
+
+            Table(model.updateRows, selection: runSafeSelection) {
+                TableColumn("Apply") { (row: AppModel.UpdateRow) in
+                    let eligible = model.activePlan[row.id] != nil
+                    Toggle("", isOn: Binding(
+                        get: { model.applyTargets.contains(row.id) },
+                        set: { _ in model.toggleApplyTarget(row.id) }
+                    ))
+                    .labelsHidden()
+                    .disabled(model.running || !eligible)
+                    // Blank, not just disabled, for repos with nothing planned —
+                    // a greyed checkbox reads as "uncheck me", an absent one as
+                    // "nothing to apply here".
+                    .opacity(eligible ? 1 : 0)
+                    .help(eligible
+                            ? "Apply the reviewed plan to this repo when you arm writes"
+                            : "No planned actions for this repo")
+                }
+                .width(min: 50, ideal: 55, max: 65)
+
+                TableColumn("Find") { (row: AppModel.UpdateRow) in
+                    if let check = row.check {
+                        StatusBadge(status: check.status)
+                            .opacity(0.6)
+                            .help("Verdict from the last find run")
+                    } else {
+                        Text("—")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .width(min: 96, ideal: 100, max: 130)
+
+                TableColumn("Update") { (row: AppModel.UpdateRow) in
+                    if let update = row.update {
+                        StatusBadge(status: update.status)
+                    } else {
+                        Text("—")
+                            .foregroundStyle(.tertiary)
+                            .help("No update run yet for this repo")
+                    }
+                }
+                .width(min: 96, ideal: 100, max: 130)
+
+                TableColumn("Repository") { (row: AppModel.UpdateRow) in
+                    RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)
+                }
+                .width(min: 140, ideal: 210, max: 300)
+
+                TableColumn("Branch") { (row: AppModel.UpdateRow) in
+                    Text(row.repo.defaultBranch)
+                        .foregroundStyle(.secondary)
+                }
+                .width(min: 45, ideal: 60, max: 90)
+
+                TableColumn("Detail") { (row: AppModel.UpdateRow) in
+                    if let result = row.update ?? row.check {
+                        DetailCell(result: result)
+                    }
                 }
             }
-            .width(min: 96, ideal: 100, max: 130)
-
-            TableColumn("Update") { (row: AppModel.UpdateRow) in
-                if let update = row.update {
-                    StatusBadge(status: update.status)
-                } else {
-                    Text("—")
-                        .foregroundStyle(.tertiary)
-                        .help("No update run yet for this repo")
-                }
+            .contextMenu(forSelectionType: String.self) { ids in
+                contextMenu(for: ids)
             }
-            .width(min: 96, ideal: 100, max: 130)
-
-            TableColumn("Repository") { (row: AppModel.UpdateRow) in
-                RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)
-            }
-            .width(min: 140, ideal: 210)
-
-            TableColumn("Branch") { (row: AppModel.UpdateRow) in
-                Text(row.repo.defaultBranch)
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 45, ideal: 60, max: 90)
-
-            TableColumn("Detail") { (row: AppModel.UpdateRow) in
-                if let result = row.update ?? row.check {
-                    DetailCell(result: result)
-                }
-            }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            contextMenu(for: ids)
         }
     }
 
