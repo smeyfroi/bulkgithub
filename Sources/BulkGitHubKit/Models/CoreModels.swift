@@ -32,16 +32,23 @@ public struct PullRequestRef: Codable, Hashable, Sendable {
     public var number: Int
     public var headRef: String
     public var headSha: String
+    /// The squash-merge commit on the base branch once merged (else nil) —
+    /// distinct from headSha (the source-branch tip). Lets a merge confirmed
+    /// after a transient error report the real merge commit. Optional for
+    /// backward-compatible decoding of previously-persisted refs.
+    public var mergeCommitSha: String?
     public var state: String // "open" | "closed" | "merged"
     public var url: String
 
-    public init(repo: String, number: Int, headRef: String, headSha: String, state: String, url: String) {
+    public init(repo: String, number: Int, headRef: String, headSha: String,
+                state: String, url: String, mergeCommitSha: String? = nil) {
         self.repo = repo
         self.number = number
         self.headRef = headRef
         self.headSha = headSha
         self.state = state
         self.url = url
+        self.mergeCommitSha = mergeCommitSha
     }
 
     public var scriptValue: [String: Any] {

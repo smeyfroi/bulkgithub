@@ -355,14 +355,29 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
                     throw GitHubClientError.invalidResponse("merge API returned unexpected shape")
                 }
                 return sha
-            } catch let error as GitHubClientError where Self.isTransientMergeError(error) {
-                if let pr = try? await getPR(repo: repo, number: number), pr.state == "merged" {
-                    return pr.headSha
+            } catch let error as GitHubClientError {
+                // On ANY failure, re-check first: the merge may have proceeded
+                // async (5xx with the squash still running), or a retry PUT may
+                // 405 because it already merged. If it's merged, report the real
+                // merge commit and never re-PUT. Only a still-not-merged
+                // transient error with attempts left retries; everything else
+                // (e.g. 409 head moved) surfaces.
+                if let mergedSha = try? await mergedCommitSha(repo: repo, number: number) {
+                    return mergedSha
                 }
-                guard attempt < maxAttempts else { throw error }
+                guard Self.isTransientMergeError(error), attempt < maxAttempts else { throw error }
                 try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
             }
         }
+    }
+
+    /// The squash-merge commit SHA if the PR is now merged, else nil — used to
+    /// confirm (and correctly report) a merge whose PUT response was lost to a
+    /// transient error, without ever re-PUTting a merged PR.
+    private func mergedCommitSha(repo: String, number: Int) async throws -> String? {
+        let pr = try await getPR(repo: repo, number: number)
+        guard pr.state == "merged" else { return nil }
+        return pr.mergeCommitSha ?? pr.headSha
     }
 
     /// A merge error worth re-checking + retrying: a server-side 5xx or a
@@ -401,6 +416,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
                               headRef: head?["ref"] as? String ?? "",
                               headSha: head?["sha"] as? String ?? "",
                               state: merged ? "merged" : rawState,
-                              url: json["html_url"] as? String ?? "")
+                              url: json["html_url"] as? String ?? "",
+                              mergeCommitSha: json["merge_commit_sha"] as? String)
     }
 }
