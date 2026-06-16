@@ -291,16 +291,51 @@ final class AppModel {
         let pending = mergeRows.filter { !$0.approved }
         guard !pending.isEmpty else { return }
         let client = githubClient()
+        // Just the Sendable scalars each fetch needs — MergeRow isn't Sendable.
+        let targets = pending.map { (repo: $0.artifact.repo, number: $0.number) }
+        let total = targets.count
+        statusLine = "Approving 0 of \(total)…"
         Task {
             var added = 0
-            for row in pending {
-                do {
-                    let pr = try await client.getPR(repo: row.artifact.repo, number: row.number)
-                    approvals.append(Approval(repo: row.artifact.repo,
-                                              prNumber: row.number, headSha: pr.headSha))
-                    added += 1
-                } catch {
-                    statusLine = "Could not approve PR #\(row.number) in \(row.artifact.repo): \(error.localizedDescription)"
+            var done = 0
+            // Each PR's getPR is an independent live round-trip that pins the
+            // current head SHA (the SHA-pinned merge precondition). Fan them
+            // out under a bounded group so a long merge queue doesn't approve
+            // one PR at a time; the API cost is unchanged. The approvals/
+            // statusLine mutations stay on the MainActor (this Task inherits
+            // AppModel's isolation); the child tasks touch only Sendable values.
+            let maxConcurrent = min(6, total)
+            await withTaskGroup(of: (repo: String, number: Int, headSha: String?, error: String?).self) { group in
+                var next = 0
+                func addTask(_ index: Int) {
+                    let target = targets[index]
+                    group.addTask {
+                        do {
+                            let pr = try await client.getPR(repo: target.repo, number: target.number)
+                            return (target.repo, target.number, pr.headSha, nil)
+                        } catch {
+                            return (target.repo, target.number, nil, error.localizedDescription)
+                        }
+                    }
+                }
+                while next < maxConcurrent { addTask(next); next += 1 }
+                for await fetched in group {
+                    done += 1
+                    if let headSha = fetched.headSha {
+                        // Skip if a concurrent toggleApproval already approved it.
+                        if !approvals.contains(where: { $0.repo == fetched.repo && $0.prNumber == fetched.number }) {
+                            approvals.append(Approval(repo: fetched.repo,
+                                                      prNumber: fetched.number, headSha: headSha))
+                            added += 1
+                        }
+                    } else {
+                        statusLine = "Could not approve PR #\(fetched.number) in \(fetched.repo): \(fetched.error ?? "unknown error")"
+                    }
+                    if next < total { addTask(next); next += 1 }
+                    // Don't clobber a failure line on the very last iteration.
+                    if done < total {
+                        statusLine = "Approving \(done) of \(total)…"
+                    }
                 }
             }
             if added > 0 {
