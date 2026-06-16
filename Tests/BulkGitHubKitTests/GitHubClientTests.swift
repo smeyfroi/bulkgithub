@@ -18,4 +18,16 @@ struct GitHubClientTests {
         // producing a leading-colon value.
         #expect(LiveGitHubClient.headQueryValue(repo: "lonely-repo", head: "bulkgh/x") == "bulkgh/x")
     }
+
+    @Test("merge retries transient 5xx/network errors, not definitive 4xx")
+    func transientMergeErrorClassification() {
+        // 5xx and network blips are ambiguous/transient → re-check + retry.
+        #expect(LiveGitHubClient.isTransientMergeError(.http(502, "Bad Gateway")))
+        #expect(LiveGitHubClient.isTransientMergeError(.http(503, "Service Unavailable")))
+        #expect(LiveGitHubClient.isTransientMergeError(.network("timeout")))
+        // 4xx are definitive failures → surface immediately, never retry.
+        #expect(!LiveGitHubClient.isTransientMergeError(.http(409, "head moved")))
+        #expect(!LiveGitHubClient.isTransientMergeError(.http(405, "not mergeable")))
+        #expect(!LiveGitHubClient.isTransientMergeError(.rateLimited(retryAfter: 30)))
+    }
 }

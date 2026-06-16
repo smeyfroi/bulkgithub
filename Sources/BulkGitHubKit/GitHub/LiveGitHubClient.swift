@@ -337,13 +337,43 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
         // `sha` is GitHub's own precondition: the merge is rejected with 409
         // if the head moved since the value was captured.
-        let json = try await fetchJSON(try mutatingRequest(
-            method: "PUT", path: "repos/\(repo)/pulls/\(number)/merge",
-            body: ["merge_method": "squash", "sha": expectedHeadSha]))
-        guard let dict = json as? [String: Any], let sha = dict["sha"] as? String else {
-            throw GitHubClientError.invalidResponse("merge API returned unexpected shape")
+        //
+        // A 5xx (or network blip) on this endpoint is transient AND ambiguous —
+        // GitHub sometimes 502s while the squash actually proceeds async. So on
+        // a transient error: re-check the PR; if it merged, we're done (never
+        // re-PUT — that would risk acting twice); otherwise back off and retry,
+        // bounded. Non-transient errors (e.g. 409 head moved) surface at once.
+        let maxAttempts = 3
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                let json = try await fetchJSON(try mutatingRequest(
+                    method: "PUT", path: "repos/\(repo)/pulls/\(number)/merge",
+                    body: ["merge_method": "squash", "sha": expectedHeadSha]))
+                guard let dict = json as? [String: Any], let sha = dict["sha"] as? String else {
+                    throw GitHubClientError.invalidResponse("merge API returned unexpected shape")
+                }
+                return sha
+            } catch let error as GitHubClientError where Self.isTransientMergeError(error) {
+                if let pr = try? await getPR(repo: repo, number: number), pr.state == "merged" {
+                    return pr.headSha
+                }
+                guard attempt < maxAttempts else { throw error }
+                try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
+            }
         }
-        return sha
+    }
+
+    /// A merge error worth re-checking + retrying: a server-side 5xx or a
+    /// network blip (both can mask a merge that proceeded async). A 4xx like
+    /// 409 (head moved) or 405 (not mergeable) is a definitive failure.
+    static func isTransientMergeError(_ error: GitHubClientError) -> Bool {
+        switch error {
+        case .http(let code, _): return (500...599).contains(code)
+        case .network: return true
+        default: return false
+        }
     }
 
     public func closePR(repo: String, number: Int) async throws {
