@@ -213,21 +213,18 @@ struct ResultsPane: View {
         } else {
             let plannedCount = model.plannedRepoIDs.count
             VStack(spacing: 0) {
-                // At rest the strip reports how many repos the plan touches;
-                // once Write is armed it becomes the arming-selection strip
-                // (the checkbox column appears then), mirroring the merge queue.
-                TableHeaderStrip(text: model.writeArmed
-                                    ? "\(model.applyTargets.count) of \(plannedCount) repo(s) selected to apply"
-                                    : "\(plannedCount) planned of \(model.updateRows.count)") {
-                    if model.writeArmed {
-                        Button("Select all") { model.selectAllApplyTargets() }
-                            .controlSize(.small)
-                            .disabled(model.running || model.applyTargets.count == plannedCount)
-                        Button("Deselect all") { model.deselectAllApplyTargets() }
-                            .controlSize(.small)
-                            .disabled(model.running || model.applyTargets.isEmpty)
-                    }
-                    filterPicker(includeSelected: model.writeArmed || rowFilter == .selected)
+                // The checkbox column is always interactive, so the strip always
+                // reports the real selection — how many of the planned repos are
+                // checked to action — not just the plan size. Arming then writes
+                // exactly this set.
+                TableHeaderStrip(text: "\(model.applyTargets.count) of \(plannedCount) repo(s) checked to apply") {
+                    Button("Select all") { model.selectAllApplyTargets() }
+                        .controlSize(.small)
+                        .disabled(model.running || model.applyTargets.count == plannedCount)
+                    Button("Deselect all") { model.deselectAllApplyTargets() }
+                        .controlSize(.small)
+                        .disabled(model.running || model.applyTargets.isEmpty)
+                    filterPicker(includeSelected: true)
                 }
 
                 Table(filtered(model.updateRows), selection: runSafeSelection) {
