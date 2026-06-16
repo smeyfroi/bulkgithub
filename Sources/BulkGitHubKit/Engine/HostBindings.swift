@@ -473,7 +473,11 @@ enum HostBindings {
                                        reason: "script deviated from the reviewed plan (createPR from \(head)) — nothing written")
                     throw GitHubClientError.http(409, "plan deviation: createPR from \(head) does not match the reviewed plan for \(fullName)")
                 }
-                if let existing = try await github.listPRs(repo: fullName, head: head, state: "open").first {
+                // Only react to a PR whose head ACTUALLY matches — never let a
+                // mis-filtered listPRs (e.g. an unrelated open PR) trigger a
+                // false "PR exists" halt or, worse, get adopted as ours.
+                if let existing = try await github.listPRs(repo: fullName, head: head, state: "open")
+                    .first(where: { $0.headRef == head }) {
                     // RESUME: the job's own PR from an earlier armed run.
                     if collector.isRegistryPR(repo: fullName, number: existing.number) {
                         collector.consumeNextAction(repo: fullName)

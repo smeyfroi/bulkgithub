@@ -219,9 +219,27 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
 
     public func listPRs(repo: String, head: String?, state: String) async throws -> [PullRequestRef] {
         var query = [URLQueryItem(name: "state", value: state)]
-        if let head { query.append(URLQueryItem(name: "head", value: head)) }
+        if let head {
+            // GitHub's pulls API expects head as "owner:branch". A bare branch
+            // is silently ignored and the API returns ALL open PRs — which made
+            // createPR's "does a PR already exist for this head?" preflight
+            // match unrelated PRs and halt with a false "PR exists".
+            query.append(URLQueryItem(name: "head", value: Self.headQueryValue(repo: repo, head: head)))
+        }
         let items = try await fetchPaginatedArray(path: "repos/\(repo)/pulls", query: query, maxPages: 10)
-        return items.compactMap { Self.pullRequest(from: $0, repo: repo) }
+        let prs = items.compactMap { Self.pullRequest(from: $0, repo: repo) }
+        // Defend against the server filter regardless: only return PRs whose
+        // head ref actually matches. This is the contract the fixture client
+        // honors and the host's createPR preflight depends on.
+        guard let head else { return prs }
+        return prs.filter { $0.headRef == head }
+    }
+
+    /// The `head` filter value for GitHub's pulls API: "owner:branch", derived
+    /// from the "owner/name" repo. A bare branch is silently ignored by GitHub.
+    static func headQueryValue(repo: String, head: String) -> String {
+        guard let slash = repo.firstIndex(of: "/") else { return head }
+        return "\(repo[..<slash]):\(head)"
     }
 
     public func searchPRs(org: String, query: String) async throws -> [PullRequestRef] {
