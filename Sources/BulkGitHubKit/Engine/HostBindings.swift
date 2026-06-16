@@ -722,13 +722,24 @@ enum HostBindings {
             }
             let explanation = stringArg(evidenceValue.objectForKeyedSubscript("explanation"))
             var evidence = Evidence(path: path, excerpt: excerpt, explanation: explanation)
-            // The receipt rule guarantees the file content is cached; capture
-            // the lines around the excerpt so the review pane can show the
-            // match in situ, not just the bare excerpt the script passed.
-            if let content = collector.fetchedContent(repo: ref.fullName, path: path),
-               let snippet = contextSnippet(around: excerpt, in: content) {
-                evidence.context = snippet.text
-                evidence.contextStartLine = snippet.startLine
+            // The receipt rule guarantees the file content is cached; locate
+            // the match against the real bytes so the review pane can show it
+            // in situ and highlight exactly the matched lines — the UI never
+            // re-guesses the match from the excerpt.
+            if let content = collector.fetchedContent(repo: ref.fullName, path: path) {
+                if let loc = locateMatch(around: excerpt, in: content) {
+                    evidence.context = loc.text
+                    evidence.contextStartLine = loc.startLine
+                    evidence.matchLines = loc.matchLines
+                    evidence.noSpecificLine = loc.noSpecificLine
+                } else {
+                    // Excerpt isn't present verbatim (e.g. the script normalised
+                    // whitespace): show it as-is rather than nothing, and flag
+                    // that there's no located line to highlight.
+                    evidence.context = excerpt
+                    evidence.contextStartLine = 1
+                    evidence.noSpecificLine = true
+                }
             }
             collector.upsert(repo: ref, status: .verifiedMatch, reason: explanation, evidence: evidence)
             collector.audit(kind: "job.reportMatch", repo: ref.fullName, detail: path)
@@ -853,25 +864,48 @@ enum HostBindings {
 
     // MARK: - Helpers
 
-    /// Lines surrounding an excerpt within fetched file content. Located by
-    /// the excerpt's first non-empty line; nil when it can't be found (the
-    /// script may have normalised whitespace).
-    static func contextSnippet(around excerpt: String, in content: String,
-                               radius: Int = 3) -> (text: String, startLine: Int)? {
-        let needle = excerpt
+    /// Where a reported match sits inside the fetched file content, resolved
+    /// against the real bytes so the review pane never re-guesses it. Returns
+    /// the context window to show, its 1-based start line, the absolute line
+    /// numbers to highlight, and whether the match has no single line to point
+    /// at (a whole-file excerpt). Located by the excerpt's first non-empty
+    /// line; nil when the excerpt is blank or can't be found, in which case the
+    /// caller falls back to showing the excerpt itself.
+    static func locateMatch(around excerpt: String, in content: String,
+                            radius: Int = 3)
+        -> (text: String, startLine: Int, matchLines: [Int], noSpecificLine: Bool)? {
+        let fileLines = content.components(separatedBy: "\n")
+        let trimmedFile = fileLines.map { $0.trimmingCharacters(in: .whitespaces) }
+        let nonEmptyFileCount = trimmedFile.filter { !$0.isEmpty }.count
+        let excerptLines = excerpt
             .split(separator: "\n", omittingEmptySubsequences: true)
-            .first.map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let needle, !needle.isEmpty else { return nil }
-        let lines = content.components(separatedBy: "\n")
-        guard let index = lines.firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces).contains(needle)
-        }) else { return nil }
-        // Cap the excerpt's contribution: a script that passes a whole file
-        // as the excerpt must not turn the context into the whole file.
-        let excerptLineCount = min(excerpt.components(separatedBy: "\n").count, 8)
-        let start = max(0, index - radius)
-        let end = min(lines.count, index + excerptLineCount + radius)
-        return (lines[start..<end].joined(separator: "\n"), start + 1)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard let firstNeedle = excerptLines.first else { return nil }
+
+        // A whole-file excerpt points at no single line: highlight nothing and
+        // let the caller caption it, rather than lighting up the whole window.
+        if nonEmptyFileCount > 0, excerptLines.count >= nonEmptyFileCount {
+            let end = min(fileLines.count, radius * 2 + 1)
+            return (fileLines[0..<end].joined(separator: "\n"), 1, [], true)
+        }
+
+        guard let anchor = trimmedFile.firstIndex(where: { $0.contains(firstNeedle) })
+        else { return nil }
+
+        // The same window the review pane has always shown: a few lines either
+        // side of the match, with the excerpt's own span capped so it can't
+        // widen the window without bound.
+        let excerptSpan = min(excerptLines.count, 8)
+        let lo = max(0, anchor - radius)
+        let hi = min(fileLines.count, anchor + excerptSpan + radius)
+        let excerptSet = Set(excerptLines)
+        var matched = (lo..<hi)
+            .filter { !trimmedFile[$0].isEmpty && excerptSet.contains(trimmedFile[$0]) }
+            .map { $0 + 1 }
+        // A sub-line fragment matches no whole line; highlight the located line.
+        if matched.isEmpty { matched = [anchor + 1] }
+        return (fileLines[lo..<hi].joined(separator: "\n"), lo + 1, matched, false)
     }
 
     /// Wraps async Swift host work in a JS Promise.

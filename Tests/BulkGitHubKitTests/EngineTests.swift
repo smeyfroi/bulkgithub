@@ -61,6 +61,10 @@ struct EngineTests {
         let evidence = byRepo["example-org/web-frontend"]?.evidence.first
         #expect(evidence?.context?.contains("\"region\": \"eu-west-1\",") == true)
         #expect(evidence?.contextStartLine == 1)
+        // The host located the matched line(s) against the real file, so the
+        // review pane highlights them rather than re-deriving from the excerpt.
+        #expect(evidence?.matchLines?.isEmpty == false)
+        #expect(evidence?.noSpecificLine != true)
     }
 
     @Test("getRepo resolves authoritative metadata without creating a result row")
@@ -85,13 +89,28 @@ struct EngineTests {
         #expect(outcome.auditEvents.contains { $0.kind == "gh.getRepo" })
     }
 
-    @Test("contextSnippet centres on the excerpt and reports its start line")
-    func contextSnippetHelper() {
+    @Test("locateMatch centres on the excerpt, reports its start line and matched lines")
+    func locateMatchHelper() {
         let content = (1...10).map { "line\($0)" }.joined(separator: "\n")
-        let snippet = HostBindings.contextSnippet(around: "line6", in: content, radius: 2)
-        #expect(snippet?.startLine == 4)
-        #expect(snippet?.text == "line4\nline5\nline6\nline7\nline8")
-        #expect(HostBindings.contextSnippet(around: "absent", in: content) == nil)
+
+        // A single-line excerpt: window centred on it, that line highlighted.
+        let loc = HostBindings.locateMatch(around: "line6", in: content, radius: 2)
+        #expect(loc?.startLine == 4)
+        #expect(loc?.text == "line4\nline5\nline6\nline7\nline8")
+        #expect(loc?.matchLines == [6])
+        #expect(loc?.noSpecificLine == false)
+
+        // Not present verbatim → nil, so the caller falls back to the excerpt.
+        #expect(HostBindings.locateMatch(around: "absent", in: content) == nil)
+
+        // A sub-line fragment matches no whole line → highlight the located line.
+        let frag = HostBindings.locateMatch(around: "ine6", in: content, radius: 1)
+        #expect(frag?.matchLines == [6])
+
+        // A whole-file excerpt points at no single line: no highlight, flagged.
+        let whole = HostBindings.locateMatch(around: content, in: content)
+        #expect(whole?.matchLines == [])
+        #expect(whole?.noSpecificLine == true)
     }
 
     @Test("write surface does not exist on the check-phase handle")

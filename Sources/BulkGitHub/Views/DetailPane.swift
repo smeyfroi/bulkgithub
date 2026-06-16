@@ -292,39 +292,36 @@ struct EvidenceView: View {
                     .foregroundStyle(.green)
             }
 
-            // Context captured by the host at reportMatch time: the match in
-            // situ with line numbers, not just the excerpt the script passed.
-            if let context = evidence.context {
-                ScrollView(.horizontal) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(contextLines(context), id: \.number) { line in
-                            HStack(spacing: 8) {
-                                Text(String(line.number))
-                                    .foregroundStyle(.tertiary)
-                                    .frame(minWidth: 28, alignment: .trailing)
-                                Text(line.text.isEmpty ? " " : line.text)
-                                    .foregroundStyle(line.isMatch ? .primary : .secondary)
-                                Spacer(minLength: 0)
-                            }
-                            .font(.system(size: 11, design: .monospaced))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(line.isMatch ? Color.yellow.opacity(0.18) : .clear)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    .textSelection(.enabled)
-                }
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-            } else {
-                ScrollView(.horizontal) {
-                    Text(evidence.excerpt)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(8)
-                }
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            // The host located the match against the real file at reportMatch
+            // time and recorded which lines to highlight; the view just renders
+            // them. Falls back to the script's excerpt when the host had no
+            // cached content to anchor in, so the pane is never blank.
+            if evidence.noSpecificLine == true {
+                Text("No specific line to highlight — this match is described above.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(contextLines(evidence.context ?? evidence.excerpt), id: \.number) { line in
+                        HStack(spacing: 8) {
+                            Text(String(line.number))
+                                .foregroundStyle(.tertiary)
+                                .frame(minWidth: 28, alignment: .trailing)
+                            Text(line.text.isEmpty ? " " : line.text)
+                                .foregroundStyle(line.isMatch ? .primary : .secondary)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.system(size: 11, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(line.isMatch ? Color.yellow.opacity(0.18) : .clear)
+                    }
+                }
+                .padding(.vertical, 4)
+                .textSelection(.enabled)
+            }
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
         }
         .padding(10)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
@@ -336,26 +333,15 @@ struct EvidenceView: View {
         let isMatch: Bool
     }
 
+    // The host decided which lines are the match (against the real file) and
+    // recorded their absolute numbers; this is a pure integer-membership
+    // render with no string matching and no silent degradation.
     private func contextLines(_ context: String) -> [ContextLine] {
-        let excerptLines = evidence.excerpt
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        var matchLines = Set(excerptLines)
-        let lines = context.components(separatedBy: "\n")
-        // A huge excerpt (a whole file, say) carries no information about
-        // WHICH lines matter — highlighting nearly everything reads as a
-        // broken diff. Degrade to plain context instead.
-        let nonEmpty = lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let wouldHighlight = nonEmpty.filter { matchLines.contains($0) }.count
-        if excerptLines.count > 8 || wouldHighlight * 2 > nonEmpty.count {
-            matchLines = []
-        }
         let start = evidence.contextStartLine ?? 1
-        return lines.enumerated().map { offset, text in
-            let trimmed = text.trimmingCharacters(in: .whitespaces)
-            return ContextLine(number: start + offset,
-                               text: text,
-                               isMatch: !trimmed.isEmpty && matchLines.contains(trimmed))
+        let matchSet = Set(evidence.matchLines ?? [])
+        return context.components(separatedBy: "\n").enumerated().map { offset, text in
+            let number = start + offset
+            return ContextLine(number: number, text: text, isMatch: matchSet.contains(number))
         }
     }
 }

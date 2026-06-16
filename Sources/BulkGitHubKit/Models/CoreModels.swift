@@ -82,14 +82,28 @@ public struct Evidence: Codable, Hashable, Sendable {
     public var context: String?
     /// 1-based line number of the first context line, for display.
     public var contextStartLine: Int?
+    /// Absolute 1-based file line numbers the host located as the match. The
+    /// UI highlights exactly these — it does no matching of its own. Empty when
+    /// the match has no single line to point at (see `noSpecificLine`).
+    /// Optional so previously-persisted results (which lack the key) still
+    /// decode; treat nil as "none".
+    public var matchLines: [Int]?
+    /// True when the match isn't pinned to specific lines — e.g. the script
+    /// reported the whole file, or the excerpt couldn't be located in it. The
+    /// UI then shows context without highlighting and captions why. Optional
+    /// for backward-compatible decoding; treat nil as false.
+    public var noSpecificLine: Bool?
 
     public init(path: String, excerpt: String, explanation: String? = nil,
-                context: String? = nil, contextStartLine: Int? = nil) {
+                context: String? = nil, contextStartLine: Int? = nil,
+                matchLines: [Int]? = nil, noSpecificLine: Bool? = nil) {
         self.path = path
         self.excerpt = excerpt
         self.explanation = explanation
         self.context = context
         self.contextStartLine = contextStartLine
+        self.matchLines = matchLines
+        self.noSpecificLine = noSpecificLine
     }
 }
 
