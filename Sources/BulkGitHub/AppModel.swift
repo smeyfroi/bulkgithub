@@ -103,7 +103,11 @@ final class AppModel {
     /// plan, otherwise every planned repo. Called whenever a fresh plan lands;
     /// the table's checkbox column and the Apply sheet read `applyTargets`.
     func refreshApplyTargets() {
-        if !canaryRepo.isEmpty, activePlan[canaryRepo] != nil {
+        // Canary-first only in the update phase — canary confinement is
+        // update-only. The merge phase defaults to every planned repo: the
+        // approval queue, not the canary, is its real per-PR selection, so a
+        // stray canary must never silently narrow an armed merge to one PR.
+        if phase == .update, !canaryRepo.isEmpty, activePlan[canaryRepo] != nil {
             applyTargets = [canaryRepo]
         } else {
             applyTargets = Set(plannedRepoIDs)
@@ -182,6 +186,10 @@ final class AppModel {
                 approvals = job.approvals ?? []
                 appliedPlan = job.appliedPlans ?? [:]
                 statusLine = job.lastRunStatus ?? "Restored previous job"
+                // applyTargets isn't persisted; re-derive it from the restored
+                // plan so a reviewed plan is applyable immediately after launch
+                // (otherwise arming Write would show "0 of N selected").
+                refreshApplyTargets()
             }
         }
         if !restoredJob {
@@ -332,6 +340,7 @@ final class AppModel {
         Task {
             var added = 0
             var done = 0
+            var failures: [(number: Int, repo: String, error: String)] = []
             // Each PR's getPR is an independent live round-trip that pins the
             // current head SHA (the SHA-pinned merge precondition). Fan them
             // out under a bounded group so a long merge queue doesn't approve
@@ -363,19 +372,23 @@ final class AppModel {
                             added += 1
                         }
                     } else {
-                        statusLine = "Could not approve PR #\(fetched.number) in \(fetched.repo): \(fetched.error ?? "unknown error")"
+                        failures.append((fetched.number, fetched.repo, fetched.error ?? "unknown error"))
                     }
                     if next < total { addTask(next); next += 1 }
-                    // Don't clobber a failure line on the very last iteration.
-                    if done < total {
-                        statusLine = "Approving \(done) of \(total)…"
-                    }
+                    statusLine = "Approving \(done) of \(total)…"
                 }
             }
-            if added > 0 {
+            // Failures are accumulated, not left in a transient statusLine that
+            // the progress line clobbers — compose one final summary so
+            // silently-skipped PRs are surfaced regardless of completion order.
+            if let firstFailure = failures.first {
+                statusLine = added > 0
+                    ? "Approved \(added) PR(s); \(failures.count) could not be approved (e.g. #\(firstFailure.number) in \(firstFailure.repo): \(firstFailure.error))"
+                    : "Could not approve \(failures.count) PR(s) — none approved (e.g. #\(firstFailure.number) in \(firstFailure.repo): \(firstFailure.error))"
+            } else if added > 0 {
                 statusLine = "Approved \(added) PR(s) — merging requires each head to still match"
-                saveNow()
             }
+            if added > 0 { saveNow() }
         }
     }
 
@@ -607,7 +620,10 @@ final class AppModel {
         phase = newPhase
         restoreWorkspace()
         writeArmed = false
-        applyTargets = []
+        // Re-default the apply selection for the phase we're entering: a
+        // restored/existing plan stays applyable (canary-first in update, all
+        // planned in merge), and a phase with no plan resolves to empty.
+        refreshApplyTargets()
         switch newPhase {
         case .check:
             statusLine = "Find phase — prompts generate read-only search scripts"

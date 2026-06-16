@@ -221,10 +221,11 @@ struct PlannedActionView: View {
             case .putContent(_, _, _, let before, let after):
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
             case .createPR(_, _, let body) where !body.isEmpty:
-                // The PR description this action will open — rendered as
-                // markdown so the review pane shows exactly what the PR will
-                // say, not just its title in the summary line above.
-                Text(.init(body))
+                // The PR description this action will open, shown verbatim so
+                // the review pane is faithful to exactly what gets posted —
+                // markdown rendering only handles inline syntax and would
+                // mangle multi-line block structure (headings, lists, code).
+                Text(verbatim: body)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
