@@ -207,6 +207,47 @@ struct MergePhaseTests {
         // Cancel needs no approvals — closing is winding back, not shipping.
     }
 
+    @Test("cancel deletes orphan branches with no PR, so the registry can empty")
+    func cancelOrphanBranches() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (artifacts, _) = try await appliedJob(client: client)
+        // Simulate the orphan state that previously bricked a job: the branches
+        // exist on the remote, but their PRs were never registered (createPR
+        // halted). listJobPRs sees nothing; listJobBranches must surface them.
+        let branchesOnly = artifacts.filter { $0.kind == .branch }
+        #expect(branchesOnly.count == 2)
+        let cancel = try validatedMerge(named: "cancel_job")
+
+        var dryConfig = EngineConfiguration()
+        dryConfig.artifactRegistry = branchesOnly
+        let plan = await ScriptEngine().run(javaScript: cancel.javaScript, phase: .merge,
+                                            params: cancel.meta.params, github: client,
+                                            organisation: "example-org", configuration: dryConfig,
+                                            onEvent: { _ in })
+        #expect(plan.status == .completed)
+        // No PRs to close — only a deleteBranch planned per orphan branch.
+        #expect(plan.plannedActions.count == 2)
+        #expect(plan.plannedActions.values.flatMap { $0 }.allSatisfy {
+            if case .deleteBranch = $0 { return true } else { return false }
+        })
+
+        var armedConfig = dryConfig
+        armedConfig.writeMode = .armed
+        armedConfig.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
+        armedConfig.referencePlan = plan.plannedActions
+        let armed = await ScriptEngine().run(javaScript: cancel.javaScript, phase: .merge,
+                                             params: cancel.meta.params, github: client,
+                                             organisation: "example-org", configuration: armedConfig,
+                                             onEvent: { _ in })
+        #expect(armed.status == .completed)
+        // Both orphan branches were deleted AND recorded consumed, so the app
+        // can drop their registry artifacts even with no merged/cancelled repo.
+        #expect(armed.consumedBranches.count == 2)
+        #expect(Set(armed.consumedBranches.map(\.repo))
+                    == ["example-org/web-frontend", "example-org/data-pipeline"])
+        #expect(client.createdBranches["example-org/web-frontend"]?.isEmpty != false)
+    }
+
     @Test("the merge surface only type-checks for merge-phase scripts")
     func phaseGatedDeclarations() throws {
         let service = try #require(TypeScriptService.loadDefault())

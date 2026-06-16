@@ -384,6 +384,10 @@ public struct RunOutcome: Sendable {
     public let state: [String: String]
     /// Remote objects an armed run created (empty for dry runs and checks).
     public let artifacts: [Artifact]
+    /// Job branches an armed merge/cancel run deleted — so the app can drop
+    /// their registry artifacts even when the repo never reached a
+    /// merged/cancelled status (an orphan branch with no PR). Empty otherwise.
+    public let consumedBranches: [Artifact]
     public let duration: TimeInterval
 }
 

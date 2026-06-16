@@ -956,6 +956,14 @@ final class AppModel {
                 approvals.removeAll { consumed.contains($0.repo) }
                 for repo in consumed { appliedPlan.removeValue(forKey: repo) }
             }
+            // Orphan branches the run deleted (no PR, so their repo never
+            // reached merged/cancelled above): drop just those branch
+            // artifacts so the registry can finally empty.
+            for branch in outcome.consumedBranches {
+                artifacts.removeAll {
+                    $0.kind == branch.kind && $0.repo == branch.repo && $0.name == branch.name
+                }
+            }
         }
         if !outcome.state.isEmpty {
             jobState.merge(outcome.state) { _, new in new }

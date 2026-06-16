@@ -220,6 +220,23 @@ public final class JobCollector: @unchecked Sendable {
         return artifacts
     }
 
+    /// Job branches deleted by an armed merge/cancel run. The app drops the
+    /// matching registry artifacts on these — the only way an orphan branch
+    /// (one with no PR, so never reaching a merged/cancelled repo status) can
+    /// leave the registry.
+    private var consumedBranches: [Artifact] = []
+
+    public func recordConsumedBranch(repo: String, name: String) {
+        lock.lock()
+        consumedBranches.append(Artifact(kind: .branch, repo: repo, name: name))
+        lock.unlock()
+    }
+
+    public var snapshotConsumedBranches: [Artifact] {
+        lock.lock(); defer { lock.unlock() }
+        return consumedBranches
+    }
+
     // MARK: Merge phase: registry scoping and approvals
 
     /// PR artifacts in the job's registry as (repo, number) pairs, deduped —
@@ -240,6 +257,15 @@ public final class JobCollector: @unchecked Sendable {
 
     public func isRegistryBranch(repo: String, name: String) -> Bool {
         artifactRegistry.contains { $0.kind == .branch && $0.repo == repo && $0.name == name }
+    }
+
+    /// Branch artifacts in the job's registry as (repo, name) pairs — what
+    /// gh.listJobBranches surfaces so a cancel script can reach branches that
+    /// have no PR (which gh.listJobPRs cannot see).
+    public var registryBranches: [(repo: String, name: String)] {
+        artifactRegistry.compactMap { artifact in
+            artifact.kind == .branch ? (repo: artifact.repo, name: artifact.name) : nil
+        }
     }
 
     public func approval(repo: String, number: Int) -> Approval? {

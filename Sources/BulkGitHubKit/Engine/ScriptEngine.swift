@@ -96,6 +96,7 @@ public final class ScriptEngine {
                        plannedActions: collector.snapshotPlan,
                        state: collector.snapshotState,
                        artifacts: collector.snapshotArtifacts,
+                       consumedBranches: collector.snapshotConsumedBranches,
                        duration: Date().timeIntervalSince(start))
         }
 

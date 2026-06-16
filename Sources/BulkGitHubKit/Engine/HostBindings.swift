@@ -483,6 +483,22 @@ enum HostBindings {
                                         detail: "#\(existing.number) already open — resumed (ARMED)")
                         return existing.scriptValue
                     }
+                    // RECONCILE: an open PR already exists for a branch THIS
+                    // job created (head is a registry branch) but the PR isn't
+                    // in our registry — adopt it rather than orphaning the
+                    // branch. This is the exact state that previously bricked a
+                    // job: a branch with no reachable PR. Loud audit so the
+                    // underlying "why did a PR already exist" stays visible.
+                    if collector.isRegistryBranch(repo: fullName, name: head) {
+                        collector.consumeNextAction(repo: fullName)
+                        collector.recordArtifact(Artifact(kind: .pullRequest, repo: fullName,
+                                                          name: "#\(existing.number)", url: existing.url))
+                        collector.upsert(repo: collector.repo(named: fullName), status: .prRaised,
+                                         reason: "PR #\(existing.number) already open for our branch — adopted: \(existing.url)")
+                        collector.audit(kind: "write.createPR.reconciled", repo: fullName,
+                                        detail: "#\(existing.number) already existed for \(head) — adopted into registry (ARMED)")
+                        return existing.scriptValue
+                    }
                     collector.haltRepo(fullName, status: .prExists,
                                        reason: "PR #\(existing.number) already open for \(head) but not created by this job: \(existing.url)")
                     throw GitHubClientError.http(409, "a PR already exists for \(head) in \(fullName)")
@@ -556,6 +572,19 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(listJobPRs, to: AnyObject.self),
                      forKeyedSubscript: "listJobPRs" as NSString)
+
+        let listJobBranches: @convention(block) () -> JSValue = {
+            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let branches = collector.registryBranches.map {
+                    ["repo": $0.repo, "name": $0.name]
+                }
+                collector.audit(kind: "gh.listJobBranches", repo: nil,
+                                detail: "→ \(branches.count) registry branch(es)")
+                return branches
+            }
+        }
+        gh.setObject(unsafeBitCast(listJobBranches, to: AnyObject.self),
+                     forKeyedSubscript: "listJobBranches" as NSString)
 
         let mergePR: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, numberValue, optsValue in
             guard let fullName = repoName(repoValue) else {
@@ -673,6 +702,11 @@ enum HostBindings {
                     try conform(fullName, action)
                     try await github.deleteBranch(repo: fullName, name: name)
                     collector.consumeNextAction(repo: fullName)
+                    // Record the deletion so the app drops this branch's
+                    // registry artifact — the only way an orphan branch (no PR,
+                    // so its repo never reaches a merged/cancelled status) can
+                    // leave the registry.
+                    collector.recordConsumedBranch(repo: fullName, name: name)
                     collector.audit(kind: "write.deleteBranch", repo: fullName,
                                     detail: "\(name) (ARMED)")
                 } else {

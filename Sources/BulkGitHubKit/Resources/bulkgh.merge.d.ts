@@ -27,6 +27,14 @@ interface GitHub {
   listJobPRs(): Promise<PR[]>;
 
   /**
+   * The branches THIS job created (the artifact registry). Includes branches
+   * with no open PR — e.g. one whose createPR never completed — which
+   * listJobPRs cannot surface. Use this in the cancel flow to find and delete
+   * orphaned branches so the registry can be emptied.
+   */
+  listJobBranches(): Promise<JobBranch[]>;
+
+  /**
    * Squash-merge one job PR. Requires user approval in the app, and
    * expectedHeadSha must match both the approved SHA and the current head.
    * Dry run: recorded; resolves to a synthetic merge sha.
@@ -48,4 +56,10 @@ interface GitHub {
    * Dry run: recorded.
    */
   deleteBranch(repo: Repo | string, name: string): Promise<void>;
+}
+
+/** A branch in the job's artifact registry — owner/name and the branch ref. */
+interface JobBranch {
+  readonly repo: string;
+  readonly name: string;
 }
