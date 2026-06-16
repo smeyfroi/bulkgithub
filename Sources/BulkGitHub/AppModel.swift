@@ -77,12 +77,15 @@ final class AppModel {
     /// True while an ARMED run is executing — drives the loud mode banner.
     var currentRunIsArmed = false
     var showApplySheet = false
-    /// Which planned repos an armed run will target — the model-backed
-    /// selection the update table's checkbox column reads and writes, and the
-    /// Apply sheet confirms. Default-populated canary-first the moment a
-    /// dry-run plan lands; reset wherever writeArmed resets, since a selection
-    /// only makes sense against the plan it was built from. Never persisted.
-    var applyTargets: Set<String> = []
+    /// Per-phase apply selection: which planned repos an armed run will target.
+    /// Each phase keeps its OWN set, so navigating Update → Merge → Update
+    /// never clobbers a deselection, and the merge selection never bleeds into
+    /// update. Default-populated canary-first the moment a fresh plan lands;
+    /// re-derived (never blindly cleared) on phase entry. Never persisted.
+    var applyTargetsByPhase: [JobPhase: Set<String>] = [:]
+    /// The apply selection for the current phase — what the table's checkbox
+    /// column and the Apply sheet read.
+    var applyTargets: Set<String> { applyTargetsByPhase[phase] ?? [] }
     /// The user-set write mode for the current phase: with it OFF, Run is a
     /// dry run; with it ON, Run applies the reviewed plan (via the
     /// confirmation sheet). Snaps back to dry run after every armed run and
@@ -102,28 +105,33 @@ final class AppModel {
     /// Default the apply selection canary-first: just the canary when it has a
     /// plan, otherwise every planned repo. Called whenever a fresh plan lands;
     /// the table's checkbox column and the Apply sheet read `applyTargets`.
-    func refreshApplyTargets() {
+    func refreshApplyTargets(force: Bool = false) {
+        // Preserve this phase's existing (non-empty) selection unless forced by
+        // a fresh plan — navigating away and back must never discard a
+        // deselection the user made on purpose.
+        if !force, !(applyTargetsByPhase[phase] ?? []).isEmpty { return }
         // Canary-first only in the update phase — canary confinement is
         // update-only. The merge phase defaults to every planned repo: the
         // approval queue, not the canary, is its real per-PR selection, so a
         // stray canary must never silently narrow an armed merge to one PR.
         if phase == .update, !canaryRepo.isEmpty, activePlan[canaryRepo] != nil {
-            applyTargets = [canaryRepo]
+            applyTargetsByPhase[phase] = [canaryRepo]
         } else {
-            applyTargets = Set(plannedRepoIDs)
+            applyTargetsByPhase[phase] = Set(plannedRepoIDs)
         }
     }
 
-    /// Select every planned repo for the armed run.
-    func selectAllApplyTargets() { applyTargets = Set(plannedRepoIDs) }
+    /// Select every planned repo for the armed run (current phase).
+    func selectAllApplyTargets() { applyTargetsByPhase[phase] = Set(plannedRepoIDs) }
 
     /// Clear the armed-run selection (Apply then disables until one is chosen).
-    func deselectAllApplyTargets() { applyTargets.removeAll() }
+    func deselectAllApplyTargets() { applyTargetsByPhase[phase] = [] }
 
-    /// Add or remove a repo from the armed-run selection.
+    /// Add or remove a repo from the current phase's armed-run selection.
     func toggleApplyTarget(_ repoID: String) {
-        if applyTargets.contains(repoID) { applyTargets.remove(repoID) }
-        else { applyTargets.insert(repoID) }
+        var set = applyTargetsByPhase[phase] ?? []
+        if set.contains(repoID) { set.remove(repoID) } else { set.insert(repoID) }
+        applyTargetsByPhase[phase] = set
     }
 
     var generating = false
@@ -469,7 +477,7 @@ final class AppModel {
         auditEvents = []
         auditTrail = []
         writeArmed = false
-        applyTargets = []
+        applyTargetsByPhase = [:]
         statusLine = settings.useFixtureGitHub
             ? "Switched to fixture data — workflow state cleared, scripts kept"
             : "Switched to LIVE GitHub — workflow state cleared, scripts kept"
@@ -577,7 +585,7 @@ final class AppModel {
         appliedPlan = [:]
         selectedRepo = nil
         writeArmed = false
-        applyTargets = []
+        applyTargetsByPhase = [:]
         quotaText = nil
     }
 
@@ -588,7 +596,7 @@ final class AppModel {
         if plannedActionsPhase == phase {
             plannedActions = [:]
             plannedActionsPhase = nil
-            applyTargets = []
+            applyTargetsByPhase[phase] = nil
         }
         selectedRepo = nil
         statusLine = "Results cleared"
@@ -654,7 +662,7 @@ final class AppModel {
             phase = recipe.phase
         }
         writeArmed = false
-        applyTargets = []
+        applyTargetsByPhase[phase] = nil
         scriptText = source
         prompt = recipe.prompt
         promptsByPhase[recipe.phase] = recipe.prompt
@@ -1020,9 +1028,11 @@ final class AppModel {
         if runPhase != .check, writeMode == .dryRun {
             plannedActions = outcome.plannedActions
             plannedActionsPhase = outcome.plannedActions.isEmpty ? nil : runPhase
-            // The selection rides the plan: default it canary-first the moment
-            // the plan lands, so flipping to Write shows the right rows checked.
-            refreshApplyTargets()
+            // A fresh plan resets this phase's selection to the canary-first
+            // default (force), so flipping to Write shows the right rows
+            // checked. Phase-entry refreshes (setPhase/init) do NOT force, so
+            // they preserve an intentional deselection.
+            refreshApplyTargets(force: true)
         }
         // Replace rather than accumulate: re-applying after a halt (or in a
         // fresh fixture session) must not leave duplicate receipts for the
