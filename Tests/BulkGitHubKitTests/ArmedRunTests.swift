@@ -44,6 +44,51 @@ struct ArmedRunTests {
         return configuration
     }
 
+    @Test("dry-run plan streams per repo via .plan events as actions are recorded")
+    func planStreamsDuringDryRun() async throws {
+        // Capture the cumulative action count carried by each .plan event,
+        // per repo. Events fire on the engine's queue, so guard with a lock.
+        final class Events: @unchecked Sendable {
+            private let lock = NSLock()
+            private var plans: [(repo: String, count: Int)] = []
+            func record(_ event: RunEvent) {
+                guard case .plan(let repo, let actions) = event else { return }
+                lock.lock(); plans.append((repo, actions.count)); lock.unlock()
+            }
+            func counts(for repo: String) -> [Int] {
+                lock.lock(); defer { lock.unlock() }
+                return plans.filter { $0.repo == repo }.map(\.count)
+            }
+        }
+
+        let client = FixtureGitHubClient.demo()
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let recipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
+        let validated = try pipeline.validate(source: recipe)
+        let state = ["stringMatches": """
+        [{"repo":"example-org/web-frontend","defaultBranch":"main","paths":["deploy/infra.json"]}]
+        """]
+
+        let events = Events()
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: .update,
+                                               params: validated.meta.params,
+                                               github: client,
+                                               organisation: "example-org",
+                                               initialState: state,
+                                               onEvent: { events.record($0) })
+        #expect(outcome.status == .completed)
+
+        let counts = events.counts(for: "example-org/web-frontend")
+        // A .plan event fired per recorded action (branch, edit, PR ⇒ ≥2),
+        // the cumulative count grew monotonically, and the final streamed
+        // list reconciles with the authoritative end-of-run snapshot.
+        #expect(counts.count >= 2)
+        #expect(counts.first == 1)
+        #expect(counts == counts.sorted())
+        #expect(counts.last == outcome.plannedActions["example-org/web-frontend"]?.count)
+    }
+
     @Test("armed apply creates branches and PRs on the fixture, with artifacts")
     func armedApplyEndToEnd() async throws {
         let client = FixtureGitHubClient.demo()

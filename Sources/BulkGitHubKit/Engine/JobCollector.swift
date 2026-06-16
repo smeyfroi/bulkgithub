@@ -159,7 +159,8 @@ public final class JobCollector: @unchecked Sendable {
         }
         lock.lock()
         plannedActions[repo, default: []].append(action)
-        let count = plannedActions[repo]?.count ?? 0
+        let actions = plannedActions[repo] ?? []
+        let count = actions.count
         knownRepos[repo] = knownRepos[repo] ?? RepoRef(fullName: repo)
         var result = resultsByRepo[repo] ?? RepoResult(repo: knownRepos[repo]!, status: .planned)
         if resultsByRepo[repo] == nil { order.append(repo) }
@@ -168,6 +169,9 @@ public final class JobCollector: @unchecked Sendable {
         resultsByRepo[repo] = result
         lock.unlock()
         onEvent(.repo(result))
+        // Stream the cumulative plan so the detail pane shows diffs the instant
+        // a repo is planned; the end-of-run snapshotPlan stays authoritative.
+        onEvent(.plan(repo: repo, actions: actions))
     }
 
     public var snapshotPlan: [String: [PlannedAction]] {

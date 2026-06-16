@@ -349,6 +349,11 @@ public enum RunEvent: Sendable {
     case log(String)
     case progress(String)
     case repo(RepoResult)
+    /// The cumulative dry-run execution plan for one repo, emitted each time
+    /// an action is recorded so the detail pane can show diffs mid-run rather
+    /// than only after the run completes. `.repo` already carries the count
+    /// for the table row; this carries the action list for the plan view.
+    case plan(repo: String, actions: [PlannedAction])
     case audit(AuditEvent)
 }
 

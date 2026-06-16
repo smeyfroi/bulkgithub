@@ -974,6 +974,14 @@ final class AppModel {
                 rows.append(result)
             }
             resultsByPhase[runPhase] = rows
+        case .plan(let repo, let actions):
+            // Stream the dry-run plan into the live view: PlanView renders
+            // activePlan the instant it is non-empty. Dry runs only — an armed
+            // run is conforming to the already-reviewed plan and must not
+            // clobber it, and a check run never plans.
+            guard !currentRunIsArmed, runPhase != .check else { break }
+            plannedActions[repo] = actions
+            plannedActionsPhase = runPhase
         case .audit(let event):
             auditEvents.append(event)
             refreshQuota()
