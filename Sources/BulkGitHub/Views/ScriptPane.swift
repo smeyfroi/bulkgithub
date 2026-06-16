@@ -77,22 +77,15 @@ struct ScriptPane: View {
             }
 
             HStack {
-                // While a scan is in flight the host has already streamed one
-                // candidate row per repo, so we know the denominator: show a
-                // determinate meter. Other runs (no candidates — e.g. an update
-                // that reuses carried-over matches) fall back to the spinner.
-                let total = model.results.count
-                let processed = model.results.filter { $0.status != .candidate }.count
-                // Stay determinate from the first candidate until the run ends
-                // (runHadCandidates), so the meter holds at 100% rather than
-                // blinking back to the spinner when the last candidate resolves
-                // while the run is still finishing.
-                let scanning = model.running && model.runHadCandidates
-                if scanning, total > 0 {
-                    ProgressView(value: Double(processed), total: Double(total))
+                // Determinate meter whenever the run has a known denominator
+                // (scan via candidate rows; Update/Merge via the worked set) —
+                // otherwise the indeterminate spinner. model.runProgress owns
+                // the per-phase logic; here it's just processed-of-total.
+                if let progress = model.runProgress {
+                    ProgressView(value: Double(progress.processed), total: Double(progress.total))
                         .controlSize(.small)
                         .frame(width: 130)
-                    Text("Scanned \(processed) of \(total)")
+                    Text("\(progressVerb) \(progress.processed) of \(progress.total)")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
@@ -121,6 +114,12 @@ struct ScriptPane: View {
         case .update: return "Describe the change to make across matching repos…"
         case .merge: return "Describe the merge or cancel action for this job's PRs…"
         }
+    }
+
+    /// Leading word for the progress meter: a scan "Scanned" repos; an
+    /// update/merge run "Processed" them.
+    private var progressVerb: String {
+        model.runHadCandidates ? "Scanned" : "Processed"
     }
 }
 

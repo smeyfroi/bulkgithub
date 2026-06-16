@@ -624,6 +624,28 @@ final class AppModel {
     }
     var registryPRCount: Int { mergeRows.count }
 
+    /// Determinate run progress as (processed, total) when the current run has
+    /// a known denominator, else nil (→ the indeterminate spinner). A scan
+    /// (Find, or an Update that re-enumerated the org) gets it from the
+    /// streamed candidate rows; Update/Merge runs that work a known set get it
+    /// from the matched/selected/registry counts.
+    var runProgress: (processed: Int, total: Int)? {
+        guard running else { return nil }
+        if runHadCandidates {
+            let total = results.count
+            guard total > 0 else { return nil }
+            return (results.filter { $0.status != .candidate }.count, total)
+        }
+        let total: Int
+        switch phase {
+        case .update: total = currentRunIsArmed ? applyTargets.count : matchedCount
+        case .merge: total = mergeRows.count
+        case .check: return nil
+        }
+        guard total > 0 else { return nil }
+        return (min(results.count, total), total)
+    }
+
     func setPhase(_ newPhase: JobPhase) {
         guard newPhase != phase, !running, !generating else { return }
         // Each phase is a separate workspace: prompt, script, and params swap
