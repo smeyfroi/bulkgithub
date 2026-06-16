@@ -132,9 +132,12 @@ struct MainView: View {
             Text("This discards the whole job — prompts, scripts, results, the reviewed plan, and the audit trail, in every phase. Settings and credentials are kept.")
         }
         .alert("This job still has open PRs or branches", isPresented: $model.showNewJobBlocked) {
+            Button("Discard Job and Reset Registry", role: .destructive) {
+                model.discardJobAndReset()
+            }
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Starting a new job would abandon what this job created on the remote — the artifact registry is the only authority that can merge or cancel it. Merge the approved PRs or run the \"Cancel job\" recipe first.")
+            Text("Starting a new job would abandon what this job created on the remote — the artifact registry is the only authority that can merge or cancel it. Merge the approved PRs or run the \"Cancel job\" recipe first.\n\nIf those paths can't recover this job, you can force a reset: it discards everything and ABANDONS tracking of any PR or branch still live on the remote (they stay on GitHub; this app can never touch them again). The audit trail keeps a record.")
         }
         .alert("Save script as recipe", isPresented: $model.showSaveRecipePrompt) {
             TextField("Recipe name", text: $model.recipeNameDraft)

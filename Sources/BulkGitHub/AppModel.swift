@@ -458,6 +458,51 @@ final class AppModel {
     /// confirmation.
     func startNewJob() {
         guard !running, !generating, artifacts.isEmpty else { return }
+        wipeJobState()
+        statusLine = "New job — describe what to find, or load a recipe"
+        saveNow()
+    }
+
+    /// Force-discard the job even when the artifact registry is non-empty —
+    /// the escape hatch from requestNewJob's refusal. This ABANDONS tracking
+    /// of anything still live on the remote: the registry is the only
+    /// authority merge/cancel has, so any branch or PR this job created and
+    /// did not merge/cancel becomes orphaned (it stays on GitHub; this app can
+    /// never touch it again). The audit trail keeps a record of what was
+    /// abandoned. Reached only via the showNewJobBlocked alert's destructive
+    /// button — the last resort when merge/cancel can't reconcile a partial
+    /// failure. Also clears the on-disk snapshot so a relaunch can't restore
+    /// the stranded receipts.
+    func discardJobAndReset() {
+        guard !running, !generating, !validating else { return }
+        // Name the receipts being abandoned before wiping them — this record
+        // is the only trace that survives the reset.
+        let abandoned = artifacts
+            .map { "\($0.kind.rawValue) \($0.name) in \($0.repo)" }
+            .sorted()
+        wipeJobState()
+        // The audit trail is the deliberate exception to the wipe: the
+        // abandonment record must survive a force-reset.
+        if !abandoned.isEmpty {
+            auditTrail = [AuditEvent(kind: "reset", repo: nil,
+                                     detail: "registry force-reset — abandoned \(abandoned.count) artifact(s): \(abandoned.joined(separator: ", "))")]
+        }
+        // Nuke the persisted snapshot too: a relaunch reading the old file
+        // would restore exactly the stranded receipts we just abandoned.
+        store.clear()
+        statusLine = abandoned.isEmpty
+            ? "Registry reset — describe what to find, or load a recipe"
+            : "Registry reset — \(abandoned.count) remote artifact(s) abandoned (see audit trail)"
+        saveNow()
+    }
+
+    /// The shared in-memory wipe behind both startNewJob and the force-reset:
+    /// every phase workspace, results, plans, logs, audit trail, carried job
+    /// state, AND the artifact registry (approvals/appliedPlan included). For
+    /// startNewJob the registry is already empty, so clearing it is a no-op;
+    /// for discardJobAndReset it is the whole point. Does not touch the status
+    /// line, persistence, or settings — callers own those.
+    private func wipeJobState() {
         phase = .check
         prompt = ""
         scriptText = ""
@@ -479,13 +524,12 @@ final class AppModel {
         auditTrail = []
         plannedActions = [:]
         plannedActionsPhase = nil
+        artifacts = []
         approvals = []
         appliedPlan = [:]
         selectedRepo = nil
         writeArmed = false
         quotaText = nil
-        statusLine = "New job — describe what to find, or load a recipe"
-        saveNow()
     }
 
     func clearResults() {
