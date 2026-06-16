@@ -50,11 +50,7 @@ struct ResultsPane: View {
             )
         } else {
             let approvedCount = model.mergeRows.filter(\.approved).count
-            HStack(spacing: 12) {
-                Text("\(approvedCount) of \(model.mergeRows.count) approved")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
+            TableHeaderStrip(text: "\(approvedCount) of \(model.mergeRows.count) approved") {
                 Button("Approve all") { model.approveAll() }
                     .controlSize(.small)
                     .disabled(model.running || approvedCount == model.mergeRows.count)
@@ -62,9 +58,6 @@ struct ResultsPane: View {
                     .controlSize(.small)
                     .disabled(model.running || approvedCount == 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .overlay(alignment: .bottom) { Divider() }
 
             Table(model.mergeRows, selection: runSafeSelection) {
                 TableColumn("Approved") { (row: AppModel.MergeRow) in
@@ -114,61 +107,76 @@ struct ResultsPane: View {
         }
     }
 
+    @ViewBuilder
     private var checkTable: some View {
         @Bindable var model = model
-        return Table(model.results, selection: runSafeSelection) {
-            TableColumn("Status") { (result: RepoResult) in
-                StatusBadge(status: result.status)
-            }
-            .width(min: 96, ideal: 100, max: 130)
+        if model.results.isEmpty {
+            ContentUnavailableView(
+                "Nothing found yet",
+                systemImage: "magnifyingglass",
+                description: Text("Describe what to find across the organisation, then Run.")
+            )
+        } else {
+            VStack(spacing: 0) {
+                let matched = model.results.filter { $0.status == .verifiedMatch }.count
+                TableHeaderStrip(text: "\(matched) matched of \(model.results.count) scanned")
+                Table(model.results, selection: runSafeSelection) {
+                    TableColumn("Status") { (result: RepoResult) in
+                        StatusBadge(status: result.status)
+                    }
+                    .width(min: 96, ideal: 100, max: 130)
 
-            TableColumn("Repository") { (result: RepoResult) in
-                RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
-            }
-            .width(min: 140, ideal: 210, max: 300)
+                    TableColumn("Repository") { (result: RepoResult) in
+                        RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
+                    }
+                    .width(min: 140, ideal: 210, max: 300)
 
-            TableColumn("Branch") { (result: RepoResult) in
-                Text(result.repo.defaultBranch)
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 45, ideal: 60, max: 90)
+                    TableColumn("Branch") { (result: RepoResult) in
+                        Text(result.repo.defaultBranch)
+                            .foregroundStyle(.secondary)
+                    }
+                    .width(min: 45, ideal: 60, max: 90)
 
-            TableColumn("Detail") { (result: RepoResult) in
-                DetailCell(result: result)
+                    TableColumn("Detail") { (result: RepoResult) in
+                        DetailCell(result: result)
+                    }
+                }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    contextMenu(for: ids)
+                }
             }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            contextMenu(for: ids)
         }
     }
 
+    @ViewBuilder
     private var updateTable: some View {
         @Bindable var model = model
-        return VStack(spacing: 0) {
-            // The arming-selection strip — mirrors the merge approval queue:
-            // visible only once Write is armed, since the checkbox column it
-            // governs only appears then. Count is over eligible (planned) repos.
-            if model.writeArmed {
-                let selectedCount = model.applyTargets.count
-                let plannedCount = model.plannedRepoIDs.count
-                HStack(spacing: 12) {
-                    Text("\(selectedCount) of \(plannedCount) repo(s) selected to apply")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Select all") { model.selectAllApplyTargets() }
-                        .controlSize(.small)
-                        .disabled(model.running || selectedCount == plannedCount)
-                    Button("Deselect all") { model.deselectAllApplyTargets() }
-                        .controlSize(.small)
-                        .disabled(model.running || selectedCount == 0)
+        if model.updateRows.isEmpty {
+            ContentUnavailableView(
+                "No repositories to update",
+                systemImage: "pencil",
+                description: Text("Run a Find step first — matches carry into Update. Then describe the change and Dry Run to build a plan.")
+            )
+        } else {
+            let plannedCount = model.plannedRepoIDs.count
+            VStack(spacing: 0) {
+                // At rest the strip reports how many repos the plan touches;
+                // once Write is armed it becomes the arming-selection strip
+                // (the checkbox column appears then), mirroring the merge queue.
+                TableHeaderStrip(text: model.writeArmed
+                                    ? "\(model.applyTargets.count) of \(plannedCount) repo(s) selected to apply"
+                                    : "\(plannedCount) planned of \(model.updateRows.count)") {
+                    if model.writeArmed {
+                        Button("Select all") { model.selectAllApplyTargets() }
+                            .controlSize(.small)
+                            .disabled(model.running || model.applyTargets.count == plannedCount)
+                        Button("Deselect all") { model.deselectAllApplyTargets() }
+                            .controlSize(.small)
+                            .disabled(model.running || model.applyTargets.isEmpty)
+                    }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .overlay(alignment: .bottom) { Divider() }
-            }
 
-            Table(model.updateRows, selection: runSafeSelection) {
+                Table(model.updateRows, selection: runSafeSelection) {
                 TableColumn("Apply") { (row: AppModel.UpdateRow) in
                     let eligible = model.activePlan[row.id] != nil
                     Toggle("", isOn: Binding(
@@ -230,6 +238,7 @@ struct ResultsPane: View {
             .contextMenu(forSelectionType: String.self) { ids in
                 contextMenu(for: ids)
             }
+            }
         }
     }
 
@@ -240,6 +249,32 @@ struct ResultsPane: View {
                 model.useAsCanary(id)
             }
         }
+    }
+}
+
+/// A quiet count header above a results table, with optional trailing controls.
+/// Shared by all three phases so they read consistently — the count on the
+/// left, any actions (approve-all / select-all) on the right.
+struct TableHeaderStrip<Trailing: View>: View {
+    let text: String
+    @ViewBuilder var trailing: Trailing
+
+    init(text: String, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+        self.text = text
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            trailing
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 
