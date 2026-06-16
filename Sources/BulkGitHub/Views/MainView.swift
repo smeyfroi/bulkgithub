@@ -114,7 +114,7 @@ struct MainView: View {
                         // mid-generation would execute a truncated script.
                         .disabled(model.scriptText.isEmpty || model.validating || model.generating
                                   || (model.writeArmed && !model.canArmWrites)
-                                  || (model.writeArmed && model.applyTargets.isEmpty))
+                                  || (model.writeArmed && model.armTargets.isEmpty))
                     }
                 }
             }
@@ -202,7 +202,8 @@ struct ApplySheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    private var count: Int { model.applyTargets.count }
+    private var isMerge: Bool { model.phase == .merge }
+    private var count: Int { model.armTargets.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -210,7 +211,9 @@ struct ApplySheet: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.red)
 
-            Text("The reviewed dry-run plan re-runs with writes enabled, for the \(count) repositor\(count == 1 ? "y" : "ies") you selected in the table. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
+            Text(isMerge
+                    ? "The reviewed plan re-runs with writes enabled, acting on the \(count) PR\(count == 1 ? "" : "s") in this job's registry. Only PRs you approved are merged; a PR whose head moved since you approved it halts with nothing done."
+                    : "The reviewed dry-run plan re-runs with writes enabled, for the \(count) repositor\(count == 1 ? "y" : "ies") you selected in the table. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -220,7 +223,9 @@ struct ApplySheet: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
             } else {
-                Label("Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Branches and PRs will really be created.",
+                Label(isMerge
+                        ? "Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Approved PRs are squash-merged and their branches deleted."
+                        : "Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Branches and PRs will really be created.",
                       systemImage: "bolt.horizontal.circle.fill")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.red)
@@ -231,14 +236,16 @@ struct ApplySheet: View {
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(role: .destructive) {
-                    let repos = model.applyTargets
+                    let repos = model.armTargets
                     dismiss()
                     model.applyPlan(to: repos)
                 } label: {
-                    Label("Arm and apply to \(count) repo\(count == 1 ? "" : "s")",
+                    Label(isMerge
+                            ? "Arm and apply to \(count) PR\(count == 1 ? "" : "s")"
+                            : "Arm and apply to \(count) repo\(count == 1 ? "" : "s")",
                           systemImage: "bolt.fill")
                 }
-                .disabled(model.applyTargets.isEmpty)
+                .disabled(model.armTargets.isEmpty)
             }
         }
         .padding(16)

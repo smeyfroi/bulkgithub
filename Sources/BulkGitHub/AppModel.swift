@@ -139,6 +139,15 @@ final class AppModel {
         applyTargetsByPhase[phase] = set
     }
 
+    /// The repos an armed apply actually targets, by phase: the user's checkbox
+    /// selection in Update; the LIVE registry in Merge — where approvals (not a
+    /// selection) gate what merges, so the scope must track the current
+    /// registry, never a stale applyTargets snapshot left over from before a
+    /// partial merge consumed artifacts.
+    var armTargets: Set<String> {
+        phase == .merge ? Set(mergeRows.map(\.artifact.repo)) : applyTargets
+    }
+
     var generating = false
     var validating = false
     var selectedRepo: String?
