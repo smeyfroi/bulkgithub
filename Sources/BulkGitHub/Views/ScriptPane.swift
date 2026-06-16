@@ -77,15 +77,31 @@ struct ScriptPane: View {
             }
 
             HStack {
-                if model.running || model.validating || model.generating {
-                    ProgressView()
+                // While a scan is in flight the host has already streamed one
+                // candidate row per repo, so we know the denominator: show a
+                // determinate meter. Other runs (no candidates — e.g. an update
+                // that reuses carried-over matches) fall back to the spinner.
+                let total = model.results.count
+                let processed = model.results.filter { $0.status != .candidate }.count
+                let scanning = model.running && model.results.contains { $0.status == .candidate }
+                if scanning, total > 0 {
+                    ProgressView(value: Double(processed), total: Double(total))
                         .controlSize(.small)
+                        .frame(width: 130)
+                    Text("Scanned \(processed) of \(total)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    if model.running || model.validating || model.generating {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(model.statusLine)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                Text(model.statusLine)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
                 Spacer()
                 Text("\(model.visibleRowCount) repos")
                     .font(.callout)
