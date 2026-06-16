@@ -175,13 +175,37 @@ struct WriteModeBanner: View {
 struct ParamsBar: View {
     @Environment(AppModel.self) private var model
 
+    /// meta.params keys that are git/PR structure rather than recipe logic.
+    /// They're grouped apart from the search/replace params because they're
+    /// "special" — the job branch and commit message, always present in
+    /// generated update scripts and structural rather than job-specific.
+    static let gitParamKeys: Set<String> = ["branch", "message", "commitMessage"]
+
     var body: some View {
+        let gitKeys = model.visibleParamKeys.filter { Self.gitParamKeys.contains($0) }
+        let otherKeys = model.visibleParamKeys.filter { !Self.gitParamKeys.contains($0) }
+        VStack(alignment: .leading, spacing: 8) {
+            if !otherKeys.isEmpty {
+                paramGroup(title: "Parameters", systemImage: "slider.horizontal.3",
+                           caption: "override the script's meta.params defaults on the next run (the script reads job.params; the source is untouched)",
+                           keys: otherKeys)
+            }
+            if !gitKeys.isEmpty {
+                paramGroup(title: "Branch & commit", systemImage: "arrow.triangle.branch",
+                           caption: "the job branch and commit message this run will use",
+                           keys: gitKeys)
+            }
+        }
+    }
+
+    private func paramGroup(title: String, systemImage: String,
+                            caption: String, keys: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Label("Param overrides", systemImage: "slider.horizontal.3")
+                Label(title, systemImage: systemImage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("— override the script's meta.params defaults on the next run (the script reads job.params; the source is untouched)")
+                Text("— \(caption)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -190,39 +214,44 @@ struct ParamsBar: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 380),
                                          spacing: 8, alignment: .topLeading)],
                       alignment: .leading, spacing: 8) {
-                ForEach(model.visibleParamKeys, id: \.self) { key in
-                    let edited = isEdited(key)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text(key)
-                                .font(.caption2)
-                                .foregroundStyle(edited ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                                .fontWeight(edited ? .semibold : .regular)
-                            if edited {
-                                Text("edited")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                                Button {
-                                    model.paramsDraft[key] = model.declaredDefault(for: key)
-                                } label: {
-                                    Image(systemName: "arrow.uturn.backward.circle")
-                                        .font(.caption2)
-                                        .foregroundStyle(.orange)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Reset to the script's default: \(model.declaredDefault(for: key) ?? "")")
-                            }
-                        }
-                        TextField(key, text: binding(for: key))
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                    }
+                ForEach(keys, id: \.self) { key in
+                    paramField(key)
                 }
             }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func paramField(_ key: String) -> some View {
+        let edited = isEdited(key)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(key)
+                    .font(.caption2)
+                    .foregroundStyle(edited ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .fontWeight(edited ? .semibold : .regular)
+                if edited {
+                    Text("edited")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Button {
+                        model.paramsDraft[key] = model.declaredDefault(for: key)
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset to the script's default: \(model.declaredDefault(for: key) ?? "")")
+                }
+            }
+            TextField(key, text: binding(for: key))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+        }
     }
 
     /// Edited = differs from the script's declared default. Unknown defaults
