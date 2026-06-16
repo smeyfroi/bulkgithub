@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
 APP="dist/BulkGitHub.app"
-VERSION="${VERSION:-0.6.0}"
+VERSION="${VERSION:-0.7.0}"
 DERIVED=".build/DerivedData"
 
 case "$CONFIG" in
