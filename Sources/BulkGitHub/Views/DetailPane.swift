@@ -190,6 +190,15 @@ struct PlannedActionView: View {
             switch action {
             case .putContent(_, _, _, let before, let after):
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
+            case .createPR(_, _, let body) where !body.isEmpty:
+                // The PR description this action will open — rendered as
+                // markdown so the review pane shows exactly what the PR will
+                // say, not just its title in the summary line above.
+                Text(.init(body))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             default:
                 // The summary line is enough for the rest — putContent diffs
                 // above already show what a PR will contain, and merge-phase

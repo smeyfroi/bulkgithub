@@ -51,7 +51,7 @@ struct MainView: View {
                 // The detail pane holds the diffs — the actual work under
                 // review — so it may open out wide at the workbench's expense.
                 DetailPane()
-                    .frame(minWidth: 260, idealWidth: 340, maxWidth: 760,
+                    .frame(minWidth: 320, idealWidth: 460, maxWidth: 760,
                            maxHeight: .infinity)
             }
             // HSplitView is not greedy — without this it collapses to its

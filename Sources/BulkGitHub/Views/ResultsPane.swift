@@ -94,7 +94,7 @@ struct ResultsPane: View {
                 TableColumn("Repository") { (row: AppModel.MergeRow) in
                     RepoCell(repo: row.repo)
                 }
-                .width(min: 140, ideal: 210)
+                .width(min: 140, ideal: 210, max: 300)
 
                 TableColumn("PR") { (row: AppModel.MergeRow) in
                     if let url = row.artifact.url, let link = URL(string: url) {
