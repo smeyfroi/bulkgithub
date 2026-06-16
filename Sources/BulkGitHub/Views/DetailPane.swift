@@ -38,7 +38,13 @@ struct DetailPane: View {
                             Button("Clear") { model.canaryRepo = "" }
                                 .controlSize(.small)
                         }
-                    } else if model.phase != .merge {
+                    } else if model.phase != .merge, !model.running,
+                              !model.artifacts.contains(where: {
+                                  $0.repo == result.id && $0.kind == .pullRequest
+                              }) {
+                        // Only offer the dry-run-this-repo affordance when it
+                        // means something: not mid-run (the live run is already
+                        // acting), and not once this repo has a raised PR.
                         Button {
                             model.useAsCanary(result.id)
                         } label: {
@@ -71,7 +77,9 @@ struct DetailPane: View {
                     // results and for update repos with nothing planned.
                     if model.phase != .check,
                        let actions = model.activePlan[result.id], !actions.isEmpty {
-                        PlanView(actions: actions)
+                        PlanView(actions: actions,
+                                 status: result.status,
+                                 runIsArmed: model.currentRunIsArmed)
                     } else {
                         ForEach(Array(result.evidence.enumerated()), id: \.offset) { _, evidence in
                             EvidenceView(evidence: evidence, repo: result.repo,
@@ -158,24 +166,46 @@ struct AppliedChangesView: View {
     }
 }
 
-/// Dry-run execution plan for one repository: the recorded writes, with
-/// native before/after diffs for content changes. Nothing here has executed.
+/// What one repository's reviewed plan shows: the recorded writes with native
+/// before/after diffs. Purple "dry run" while nothing has executed; flips to
+/// red "Applying…/Applied" once a Write run is armed or the row has reached a
+/// write outcome — the plan survives an armed run (it is the reference the
+/// engine checked the writes against), so the header must not keep claiming
+/// "nothing executed" against a repo whose PR was raised.
 struct PlanView: View {
     let actions: [PlannedAction]
+    /// The current status of the repo this plan belongs to — drives whether
+    /// the plan reads as a dry run or as applied writes.
+    let status: RepoStatus
+    /// True while THIS run is armed (writes in flight), from model.currentRunIsArmed.
+    let runIsArmed: Bool
+
+    /// The plan has been (or is being) applied: an armed run is live, or the
+    /// row has already reached a write outcome.
+    private var isApplying: Bool {
+        runIsArmed || [.prRaised, .merged, .cancelled, .conflicted, .blocked].contains(status)
+    }
+
+    private var headerText: String {
+        guard isApplying else { return "Execution plan — dry run, nothing executed" }
+        return runIsArmed ? "Applying the reviewed plan…" : "Applied — what this PR changed"
+    }
+
+    private var tint: Color { isApplying ? .red : .purple }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Execution plan — dry run, nothing executed",
-                  systemImage: "list.bullet.clipboard")
+            Label(headerText,
+                  systemImage: isApplying ? "bolt.fill" : "list.bullet.clipboard")
                 .font(.headline)
-                .foregroundStyle(.purple)
+                .foregroundStyle(tint)
 
             ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
                 PlannedActionView(action: action)
             }
         }
         .padding(10)
-        .background(.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
