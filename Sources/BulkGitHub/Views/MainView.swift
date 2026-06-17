@@ -3,6 +3,8 @@ import BulkGitHubKit
 
 struct MainView: View {
     @Environment(AppModel.self) private var model
+    // Measured width of the middle workbench column, used to pin its panes.
+    @State private var workbenchWidth: CGFloat = 0
 
     var body: some View {
         @Bindable var model = model
@@ -32,21 +34,32 @@ struct MainView: View {
                 // Split views measure children with unspecified proposals, so
                 // a child with a wide ideal (the code editor's longest line)
                 // can win the pane width and overflow-centre past both edges.
-                // Pin every pane to the measured column width instead.
-                GeometryReader { geo in
-                    VSplitView {
-                        ScriptPane()
-                            .frame(width: geo.size.width)
-                            .frame(minHeight: 240, maxHeight: .infinity)
-                        ResultsPane()
-                            .frame(width: geo.size.width)
-                            .frame(minHeight: 160, maxHeight: .infinity)
-                        ConsolePane()
-                            .frame(width: geo.size.width)
-                            .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
-                    }
+                // Pin every pane to the measured column width instead — but
+                // measure it in a *background* GeometryReader, never by wrapping
+                // the panes in one: a GeometryReader sinks the toolbar's top
+                // safe-area inset on macOS 26's floating glass toolbar, dropping
+                // ScriptPane's first row (the run-mode banner) underneath the
+                // toolbar. As a direct child the VSplitView insets normally.
+                VSplitView {
+                    ScriptPane()
+                        .frame(width: workbenchWidth > 0 ? workbenchWidth : nil)
+                        .frame(minHeight: 240, maxHeight: .infinity)
+                    ResultsPane()
+                        .frame(width: workbenchWidth > 0 ? workbenchWidth : nil)
+                        .frame(minHeight: 160, maxHeight: .infinity)
+                    ConsolePane()
+                        .frame(width: workbenchWidth > 0 ? workbenchWidth : nil)
+                        .frame(minHeight: 80, idealHeight: 120, maxHeight: 240)
                 }
                 .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    GeometryReader { geo in
+                        Color.clear
+                            .onChange(of: geo.size.width, initial: true) { _, width in
+                                workbenchWidth = width
+                            }
+                    }
+                }
                 .layoutPriority(1)
                 // The detail pane holds the diffs — the actual work under
                 // review — so it may open out wide at the workbench's expense.
