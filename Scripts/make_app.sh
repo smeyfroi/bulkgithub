@@ -10,15 +10,19 @@
 # alike. Xcode's accessor probes Contents/Resources, where xcodebuild embeds
 # every package resource bundle.
 #
-# Ad-hoc signed for local use; CI release signing/notarization is separate
-# (see .github/workflows/release.yml).
+# Signing: ad-hoc by default (local use). For a Developer ID build, set
+# SIGN_IDENTITY="Developer ID Application" and DEVELOPMENT_TEAM=<team id>; the
+# app, nested package bundles, and frameworks are then signed by xcodebuild with
+# a secure timestamp under the hardened runtime, ready for notarization. CI
+# wires this up on tag releases (see .github/workflows/release.yml).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
 APP="dist/BulkGitHub.app"
-VERSION="${VERSION:-0.7.0}"
+VERSION="${VERSION:-0.8.0}"
 DERIVED=".build/DerivedData"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 case "$CONFIG" in
   release) XCODE_CONFIG="Release" ;;
@@ -26,9 +30,16 @@ case "$CONFIG" in
   *) echo "unknown config: $CONFIG (use release|debug)" >&2; exit 1 ;;
 esac
 
+SIGN_ARGS=(CODE_SIGN_IDENTITY="$SIGN_IDENTITY")
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  : "${DEVELOPMENT_TEAM:?DEVELOPMENT_TEAM is required when SIGN_IDENTITY is not ad-hoc}"
+  SIGN_ARGS+=(DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" OTHER_CODE_SIGN_FLAGS="--timestamp")
+fi
+
 xcodebuild -project BulkGitHub.xcodeproj -scheme BulkGitHubApp \
   -configuration "$XCODE_CONFIG" -derivedDataPath "$DERIVED" \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" \
+  "${SIGN_ARGS[@]}" \
   build
 
 BUILT="$DERIVED/Build/Products/$XCODE_CONFIG/BulkGitHub.app"
@@ -45,5 +56,10 @@ rm -rf "$APP"
 mkdir -p dist
 ditto "$BUILT" "$APP"
 
-codesign --force --sign - "$APP"
-echo "Built $APP (config: $XCODE_CONFIG, version: $VERSION)"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  # Ad-hoc re-sign for local use; nested code was already ad-hoc signed by the build.
+  codesign --force --sign - "$APP"
+fi
+# For a Developer ID build, ditto preserves xcodebuild's signature (app + nested
+# bundles, hardened runtime, secure timestamp); no re-sign needed.
+echo "Built $APP (config: $XCODE_CONFIG, version: $VERSION, identity: $SIGN_IDENTITY)"

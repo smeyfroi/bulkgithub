@@ -1,7 +1,14 @@
-# Release skeleton (plan v2 — Release Workflow). Builds and uploads an
-# UNSIGNED app artifact. Developer ID signing + notarization are stubbed below
-# and require the listed secrets before they can be enabled. Never commit
-# credentials.
+# Signed release build. Every run produces a fully Developer ID-signed,
+# notarized, stapled app — these are production drops, never unsigned. A `v*`
+# tag additionally publishes the artifact to a GitHub release. workflow_dispatch
+# runs the same signed pipeline (for testing) but publishes nothing.
+#
+# Required repository/organization secrets:
+#   DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64   base64 of the .p12
+#   DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD .p12 export password
+#   APPLE_ID                                      Apple ID for notarytool
+#   APPLE_APP_SPECIFIC_PASSWORD                   app-specific password
+# Never commit credentials.
 name: Release
 
 on:
@@ -14,50 +21,117 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-latest
+    name: Build BulkGitHub
+    runs-on: macos-26
+    env:
+      APPLE_TEAM_ID: EZCN55TA7J
+
     steps:
       - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
 
       - name: Test
         run: swift test
 
-      - name: Build app bundle
-        run: VERSION="${GITHUB_REF_NAME#v}" ./Scripts/make_app.sh release
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
-      # --- Developer ID signing + notarization (enable when secrets exist) ---
-      # Required secrets:
-      #   APPLE_TEAM_ID
-      #   SIGNING_CERTIFICATE_P12_BASE64 / SIGNING_CERTIFICATE_PASSWORD
-      #   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID / APP_STORE_CONNECT_PRIVATE_KEY
-      #
-      # - name: Import signing certificate
-      #   run: |
-      #     echo "$SIGNING_CERTIFICATE_P12_BASE64" | base64 --decode > cert.p12
-      #     security create-keychain -p ci build.keychain
-      #     security import cert.p12 -k build.keychain -P "$SIGNING_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-      # - name: Sign
-      #   run: codesign --force --options runtime --sign "Developer ID Application: … ($APPLE_TEAM_ID)" dist/BulkGitHub.app
-      # - name: Notarize and staple
-      #   run: |
-      #     ditto -c -k --keepParent dist/BulkGitHub.app dist/BulkGitHub.zip
-      #     xcrun notarytool submit dist/BulkGitHub.zip --key-id "$APP_STORE_CONNECT_KEY_ID" … --wait
-      #     xcrun stapler staple dist/BulkGitHub.app
+          echo "$DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD" \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Build signed app
+        env:
+          SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: ${{ env.APPLE_TEAM_ID }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          ./Scripts/make_app.sh release
+
+      - name: Verify signed app
+        run: |
+          codesign --verify --deep --strict --verbose=4 dist/BulkGitHub.app
+          codesign -dvvv dist/BulkGitHub.app
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/BulkGitHub.app "$RUNNER_TEMP/BulkGitHub-notary.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/BulkGitHub-notary.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple dist/BulkGitHub.app
+          xcrun stapler validate dist/BulkGitHub.app
+          codesign --verify --deep --strict --verbose=4 dist/BulkGitHub.app
+          spctl -a -vvv -t exec dist/BulkGitHub.app
 
       - name: Package
         run: ditto -c -k --keepParent dist/BulkGitHub.app dist/BulkGitHub.zip
 
+      - name: Verify packaged app
+        run: |
+          security delete-keychain "$SIGNING_KEYCHAIN_PATH"
+          security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db"
+          VERIFY_DIR="$RUNNER_TEMP/bulkgithub-release-verify"
+          mkdir -p "$VERIFY_DIR"
+          ditto -x -k dist/BulkGitHub.zip "$VERIFY_DIR"
+          codesign --verify --deep --strict --verbose=4 "$VERIFY_DIR/BulkGitHub.app"
+          codesign -dvvv "$VERIFY_DIR/BulkGitHub.app"
+          xcrun stapler validate "$VERIFY_DIR/BulkGitHub.app"
+          spctl -a -vvv -t exec "$VERIFY_DIR/BulkGitHub.app"
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: BulkGitHub
           path: dist/BulkGitHub.zip
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish GitHub release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/BulkGitHub.zip \
-            --title "BulkGitHub $GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes "Unsigned development build — right-click → Open on first launch. Developer ID signing and notarization arrive when the signing secrets are configured."
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/BulkGitHub.zip --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/BulkGitHub.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "BulkGitHub $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
