@@ -91,11 +91,24 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           ditto -c -k --keepParent dist/BulkGitHub.app "$RUNNER_TEMP/BulkGitHub-notary.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/BulkGitHub-notary.zip" \
+          SUBMIT_JSON=$(xcrun notarytool submit "$RUNNER_TEMP/BulkGitHub-notary.zip" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --output-format json --wait)
+          echo "$SUBMIT_JSON"
+          SUB_ID=$(echo "$SUBMIT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          STATUS=$(echo "$SUBMIT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")
+          echo "Notarization status: $STATUS (submission $SUB_ID)"
+          # Always surface the detailed log — it pinpoints any rejected binary.
+          xcrun notarytool log "$SUB_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" || true
+          if [[ "$STATUS" != "Accepted" ]]; then
+            echo "Notarization did not succeed (status: $STATUS)" >&2
+            exit 1
+          fi
           xcrun stapler staple dist/BulkGitHub.app
           xcrun stapler validate dist/BulkGitHub.app
           codesign --verify --deep --strict --verbose=4 dist/BulkGitHub.app
