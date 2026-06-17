@@ -17,6 +17,13 @@ struct ResultsPane: View {
     /// filter that only makes sense in one phase doesn't leak into another.
     @State private var rowFilter: RowFilter = .all
 
+    // Column sort order, one per table. Defaults to repository name ascending;
+    // clicking a header re-sorts. Kept per-table so a phase switch preserves
+    // each table's choice.
+    @State private var checkSort = [KeyPathComparator(\RepoResult.repo.fullName)]
+    @State private var updateSort = [KeyPathComparator(\AppModel.UpdateRow.repo.fullName)]
+    @State private var mergeSort = [KeyPathComparator(\AppModel.MergeRow.repo.fullName)]
+
     /// Table selection that survives streaming updates. While a run is
     /// appending rows, the NSTableView-backed Table reloads and writes nil
     /// back through its selection binding — so clicking a row mid-run
@@ -92,7 +99,7 @@ struct ResultsPane: View {
             ContentUnavailableView(
                 "No job pull requests",
                 systemImage: "arrow.triangle.pull",
-                description: Text("Apply an update plan first — the PRs it creates appear here for approval and merging.")
+                description: Text("Apply an update plan first — the PRs it creates appear here for approval and completion.")
             )
         } else {
             let approvedCount = model.mergeRows.filter(\.approved).count
@@ -105,7 +112,7 @@ struct ResultsPane: View {
                     .disabled(model.running || approvedCount == 0)
             }
 
-            Table(model.mergeRows, selection: runSafeSelection) {
+            Table(model.mergeRows.sorted(using: mergeSort), selection: runSafeSelection, sortOrder: $mergeSort) {
                 TableColumn("Approved") { (row: AppModel.MergeRow) in
                     Toggle("", isOn: Binding(
                         get: { row.approved },
@@ -119,23 +126,23 @@ struct ResultsPane: View {
                 }
                 .width(min: 55, ideal: 60, max: 70)
 
-                TableColumn("Merge") { (row: AppModel.MergeRow) in
+                TableColumn("Complete", value: \.completeOrder) { (row: AppModel.MergeRow) in
                     if let result = row.result {
                         StatusBadge(status: result.status)
                     } else {
                         Text("—")
                             .foregroundStyle(.tertiary)
-                            .help("No merge run yet")
+                            .help("Not run yet")
                     }
                 }
                 .width(min: 96, ideal: 100, max: 130)
 
-                TableColumn("Repository") { (row: AppModel.MergeRow) in
+                TableColumn("Repository", value: \.repo.fullName) { (row: AppModel.MergeRow) in
                     RepoCell(repo: row.repo)
                 }
                 .width(min: 140, ideal: 210, max: 300)
 
-                TableColumn("PR") { (row: AppModel.MergeRow) in
+                TableColumn("PR", value: \.number) { (row: AppModel.MergeRow) in
                     if let url = row.artifact.url, let link = URL(string: url) {
                         Link(row.artifact.name, destination: link)
                     } else {
@@ -173,18 +180,18 @@ struct ResultsPane: View {
                                     : "\(matched) matched of \(model.results.count) scanned") {
                     filterPicker(includeSelected: false)
                 }
-                Table(filtered(model.results), selection: runSafeSelection) {
-                    TableColumn("Status") { (result: RepoResult) in
+                Table(filtered(model.results).sorted(using: checkSort), selection: runSafeSelection, sortOrder: $checkSort) {
+                    TableColumn("Status", value: \.status.sortOrder) { (result: RepoResult) in
                         StatusBadge(status: result.status)
                     }
                     .width(min: 96, ideal: 100, max: 130)
 
-                    TableColumn("Repository") { (result: RepoResult) in
+                    TableColumn("Repository", value: \.repo.fullName) { (result: RepoResult) in
                         RepoCell(repo: result.repo, isCanary: model.canaryRepo == result.id)
                     }
                     .width(min: 140, ideal: 210, max: 300)
 
-                    TableColumn("Branch") { (result: RepoResult) in
+                    TableColumn("Branch", value: \.repo.defaultBranch) { (result: RepoResult) in
                         Text(result.repo.defaultBranch)
                             .foregroundStyle(.secondary)
                     }
@@ -227,7 +234,7 @@ struct ResultsPane: View {
                     filterPicker(includeSelected: true)
                 }
 
-                Table(filtered(model.updateRows), selection: runSafeSelection) {
+                Table(filtered(model.updateRows).sorted(using: updateSort), selection: runSafeSelection, sortOrder: $updateSort) {
                 TableColumn("Apply") { (row: AppModel.UpdateRow) in
                     let eligible = model.activePlan[row.id] != nil
                     Toggle("", isOn: Binding(
@@ -246,7 +253,7 @@ struct ResultsPane: View {
                 }
                 .width(min: 50, ideal: 55, max: 65)
 
-                TableColumn("Find") { (row: AppModel.UpdateRow) in
+                TableColumn("Find", value: \.checkOrder) { (row: AppModel.UpdateRow) in
                     if let check = row.check {
                         StatusBadge(status: check.status)
                             .opacity(0.6)
@@ -258,7 +265,7 @@ struct ResultsPane: View {
                 }
                 .width(min: 96, ideal: 100, max: 130)
 
-                TableColumn("Update") { (row: AppModel.UpdateRow) in
+                TableColumn("Update", value: \.updateOrder) { (row: AppModel.UpdateRow) in
                     if let update = row.update {
                         StatusBadge(status: update.status)
                     } else {
@@ -269,12 +276,12 @@ struct ResultsPane: View {
                 }
                 .width(min: 96, ideal: 100, max: 130)
 
-                TableColumn("Repository") { (row: AppModel.UpdateRow) in
+                TableColumn("Repository", value: \.repo.fullName) { (row: AppModel.UpdateRow) in
                     RepoCell(repo: row.repo, isCanary: model.canaryRepo == row.id)
                 }
                 .width(min: 140, ideal: 210, max: 300)
 
-                TableColumn("Branch") { (row: AppModel.UpdateRow) in
+                TableColumn("Branch", value: \.repo.defaultBranch) { (row: AppModel.UpdateRow) in
                     Text(row.repo.defaultBranch)
                         .foregroundStyle(.secondary)
                 }
@@ -400,12 +407,24 @@ struct StatusBadge: View {
     let status: RepoStatus
 
     var body: some View {
-        Text(status.rawValue)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
+        HStack(spacing: 3) {
+            if let icon { Image(systemName: icon) }
+            Text(status.rawValue)
+        }
+        .font(.caption.weight(.medium))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.18), in: Capsule())
+        .foregroundStyle(color)
+    }
+
+    /// A warning glyph on the states that need attention, so they don't read as
+    /// just another pill.
+    private var icon: String? {
+        switch status {
+        case .failed, .blocked, .conflicted: return "exclamationmark.triangle.fill"
+        default: return nil
+        }
     }
 
     private var color: Color {

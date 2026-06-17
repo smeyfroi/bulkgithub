@@ -230,6 +230,13 @@ struct PlannedActionView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            case .editPR(_, let body) where !body.isEmpty:
+                // The new PR body this edit will post, shown verbatim.
+                Text(verbatim: body)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             default:
                 // The summary line is enough for the rest — putContent diffs
                 // above already show what a PR will contain, and merge-phase
@@ -248,6 +255,7 @@ struct PlannedActionView: View {
         case .createPR: return "arrow.triangle.pull"
         case .mergePR: return "arrow.triangle.merge"
         case .closePR: return "xmark.circle"
+        case .editPR: return "pencil"
         case .deleteBranch: return "trash"
         }
     }

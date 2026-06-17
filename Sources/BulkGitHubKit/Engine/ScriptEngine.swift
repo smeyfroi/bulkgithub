@@ -41,6 +41,14 @@ public struct EngineConfiguration: Sendable {
     /// Merge phase: the user's per-PR approvals with the head SHA approved.
     public var approvals: [Approval] = []
 
+    /// Update phase: host-authoritative PR title/body. When non-nil, the
+    /// createPR capability uses these for EVERY created PR, overriding whatever
+    /// the generated script passes — so the user's reviewed PR Title /
+    /// Description fields are the source of truth regardless of the script.
+    /// nil = no override (fall back to the script's values).
+    public var prTitleOverride: String?
+    public var prBodyOverride: String?
+
     public init() {}
 
     public init(settings: AppSettings) {
@@ -152,7 +160,9 @@ public final class ScriptEngine {
         HostBindings.install(in: context, phase: phase, params: params,
                              github: github, organisation: organisation,
                              collector: collector, limiter: limiter, cancel: cancel,
-                             vmQueue: vmQueue, writeMode: configuration.writeMode)
+                             vmQueue: vmQueue, writeMode: configuration.writeMode,
+                             prTitleOverride: configuration.prTitleOverride,
+                             prBodyOverride: configuration.prBodyOverride)
 
         let modeSuffix = configuration.writeMode == .armed
             ? ", mode: ARMED — writes reach the GitHub client"

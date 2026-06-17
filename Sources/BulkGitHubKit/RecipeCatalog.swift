@@ -85,6 +85,11 @@ public enum RecipeCatalog {
                prompt: "cancel this job: close its open pull requests without merging and delete its branches",
                phase: .merge,
                systemImage: "xmark.circle"),
+        Recipe(id: "change_pr_body",
+               title: "Change PR body",
+               prompt: "replace the description of every pull request this job created with the text in the body parameter",
+               phase: .merge,
+               systemImage: "square.and.pencil"),
     ]
 
     public static func recipe(id: String) -> Recipe? {

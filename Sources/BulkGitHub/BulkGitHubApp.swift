@@ -77,9 +77,13 @@ struct BulkGitHubApp: App {
                 Button("Update Phase") { model.setPhase(.update) }
                     .keyboardShortcut("2", modifiers: .command)
                     .disabled(model.running || model.generating)
-                Button("Merge Phase") { model.setPhase(.merge) }
+                Button("Complete Phase") { model.setPhase(.merge) }
                     .keyboardShortcut("3", modifiers: .command)
                     .disabled(model.running || model.generating)
+                Divider()
+                Button("Reset GitHub Connection") { model.resetGitHubSession() }
+                    .disabled(model.running)
+                    .help("Tear down and rebuild the GitHub connection pool if a run seems wedged")
                 Divider()
             }
             #if DEBUG

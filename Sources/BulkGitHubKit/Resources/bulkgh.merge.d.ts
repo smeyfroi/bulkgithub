@@ -52,6 +52,13 @@ interface GitHub {
   closePR(repo: Repo | string, number: number): Promise<void>;
 
   /**
+   * Replace the body/description of one job PR (registry-scoped) — e.g. to
+   * append a status note to PRs this job opened. Title is unchanged.
+   * Dry run: recorded.
+   */
+  editPR(repo: Repo | string, number: number, body: string): Promise<void>;
+
+  /**
    * Delete one job branch (must be "bulkgh/"-prefixed AND in the registry).
    * Dry run: recorded.
    */

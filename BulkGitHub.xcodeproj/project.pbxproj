@@ -14,6 +14,7 @@
 		542EFD1FF2195A701105B835 /* ScriptPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296729E8EA1172009D28588 /* ScriptPane.swift */; };
 		649F9DE327A4082A3EAC1BC8 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE12C853F496916CB6381059 /* MainView.swift */; };
 		976BA8FF997478BDD1763FEB /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 594A31D0CE0E1672EE7EFDA0 /* CodeEditor */; };
+		A6A4AFDC4F59BBCC8811AE75 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 275532501BCE52C5B89B6CB1 /* NotificationService.swift */; };
 		C856746F11616974F4045F1A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C60DBDC4D8462B7A34B4DD5 /* AppModel.swift */; };
 		CAE073ED0FEEF7AC7BD02F3E /* BulkGitHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */; };
 		D52433840A47BB9003E0153A /* DetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8748F350BA2FBF938EAAD686 /* DetailPane.swift */; };
@@ -22,11 +23,15 @@
 
 /* Begin PBXFileReference section */
 		156045361629C4371FD4786F /* native-macos-bulkgithub-app-plan-v2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "native-macos-bulkgithub-app-plan-v2.md"; sourceTree = "<group>"; };
+		275532501BCE52C5B89B6CB1 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		2C60DBDC4D8462B7A34B4DD5 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		323F23FF61F62A8D59B260E4 /* use-case-walkthrough-fixes.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "use-case-walkthrough-fixes.md"; sourceTree = "<group>"; };
 		3F9B3BF5794052EE7D6B4676 /* 0001-javascriptcore-as-embedded-script-runtime.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "0001-javascriptcore-as-embedded-script-runtime.md"; sourceTree = "<group>"; };
 		46FCB9DC9008DBAEA24B82FC /* BulkGitHubApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BulkGitHubApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4FA31B7DFFC4C88194D31523 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		548FBAE8D574C8FE2DD2DE4C /* 0003-repository-custom-properties-as-a-host-capability.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "0003-repository-custom-properties-as-a-host-capability.md"; sourceTree = "<group>"; };
 		6296729E8EA1172009D28588 /* ScriptPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptPane.swift; sourceTree = "<group>"; };
+		6DD0BDD21B8C254411E343C8 /* repo-custom-properties.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "repo-custom-properties.md"; sourceTree = "<group>"; };
 		720CE2A4D517FB183AAB2E93 /* project.yml */ = {isa = PBXFileReference; lastKnownFileType = text.yaml; path = project.yml; sourceTree = "<group>"; };
 		74C2A201574561400FC7F7D2 /* ResultsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsPane.swift; sourceTree = "<group>"; };
 		8748F350BA2FBF938EAAD686 /* DetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailPane.swift; sourceTree = "<group>"; };
@@ -58,6 +63,8 @@
 			children = (
 				156045361629C4371FD4786F /* native-macos-bulkgithub-app-plan-v2.md */,
 				AE76DF2E2EA7C301865BFFA5 /* native-macos-bulkgithub-app-plan.md */,
+				6DD0BDD21B8C254411E343C8 /* repo-custom-properties.md */,
+				323F23FF61F62A8D59B260E4 /* use-case-walkthrough-fixes.md */,
 			);
 			path = plans;
 			sourceTree = "<group>";
@@ -96,6 +103,7 @@
 			children = (
 				3F9B3BF5794052EE7D6B4676 /* 0001-javascriptcore-as-embedded-script-runtime.md */,
 				9D5D5A96C07E8829A14779D2 /* 0002-merge-phase-stays-script-driven.md */,
+				548FBAE8D574C8FE2DD2DE4C /* 0003-repository-custom-properties-as-a-host-capability.md */,
 			);
 			path = decisions;
 			sourceTree = "<group>";
@@ -127,6 +135,7 @@
 				2C60DBDC4D8462B7A34B4DD5 /* AppModel.swift */,
 				4FA31B7DFFC4C88194D31523 /* Assets.xcassets */,
 				BF52266317D5CFF08BB892C1 /* BulkGitHubApp.swift */,
+				275532501BCE52C5B89B6CB1 /* NotificationService.swift */,
 				F44F6CB2D0B78243475057F5 /* WindowSnapshotter.swift */,
 			);
 			path = BulkGitHub;
@@ -213,6 +222,7 @@
 				CAE073ED0FEEF7AC7BD02F3E /* BulkGitHubApp.swift in Sources */,
 				D52433840A47BB9003E0153A /* DetailPane.swift in Sources */,
 				649F9DE327A4082A3EAC1BC8 /* MainView.swift in Sources */,
+				A6A4AFDC4F59BBCC8811AE75 /* NotificationService.swift in Sources */,
 				02BBE19D9FF7E4EB5F65E51C /* ResultsPane.swift in Sources */,
 				542EFD1FF2195A701105B835 /* ScriptPane.swift in Sources */,
 				1C258BEF93F13C53F0E3DAD4 /* SettingsView.swift in Sources */,
@@ -359,7 +369,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.5.0;
+				MARKETING_VERSION = 0.8.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meyfroidt.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;
@@ -384,7 +394,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.5.0;
+				MARKETING_VERSION = 0.8.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meyfroidt.bulkgithub;
 				PRODUCT_NAME = BulkGitHub;
 				SDKROOT = macosx;

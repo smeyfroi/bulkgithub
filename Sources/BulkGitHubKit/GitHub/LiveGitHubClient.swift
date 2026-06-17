@@ -21,13 +21,40 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     private let tokenProvider: TokenProvider
     private let session: URLSession
     private let rateLimit: RateLimitMonitor?
+    private let retry: RetryMonitor?
+    /// Backoff jitter source (returns 0...1), injectable so the retry schedule
+    /// is deterministic in tests.
+    private let jitter: @Sendable () -> Double
+
+    /// Dedicated session config for GitHub REST — built fresh (not `.shared`) so
+    /// a wedged connection (#14) can be torn down by minting a new session, and
+    /// ephemeral/no-cache so a stale cached GET never replays old x-ratelimit-*
+    /// headers into the quota monitor.
+    public static func makeConfiguration() -> URLSessionConfiguration {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 180
+        cfg.waitsForConnectivity = false
+        cfg.httpMaximumConnectionsPerHost = 4
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        return cfg
+    }
+
+    public static func makeSession() -> URLSession {
+        URLSession(configuration: makeConfiguration())
+    }
 
     public init(apiHost: String, tokenProvider: @escaping TokenProvider,
-                session: URLSession = .shared, rateLimit: RateLimitMonitor? = nil) {
+                session: URLSession = LiveGitHubClient.makeSession(), rateLimit: RateLimitMonitor? = nil,
+                retry: RetryMonitor? = nil,
+                jitter: @escaping @Sendable () -> Double = { Double.random(in: 0...1) }) {
         self.apiHost = URL(string: apiHost) ?? URL(string: "https://api.github.com")!
         self.tokenProvider = tokenProvider
         self.session = session
         self.rateLimit = rateLimit
+        self.retry = retry
+        self.jitter = jitter
     }
 
     // MARK: Requests
@@ -51,7 +78,135 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         return request
     }
 
+    // MARK: Transient-failure retry (idempotent reads)
+
+    private static let maxReadAttempts = 4
+    private static let readRetryDeadline: TimeInterval = 30   // per-call ceiling
+    private static let rateLimitWaitCap: TimeInterval = 60    // beyond this, fail fast
+
+    /// A returned status worth retrying for a read — a server-side 5xx.
+    static func isRetryableStatus(_ code: Int) -> Bool { (500...599).contains(code) }
+
+    /// A short label for the retry footer, derived from the request path:
+    /// "owner/repo" for repo calls, "search", else "GitHub".
+    static func retryLabel(_ request: URLRequest) -> String {
+        let parts = (request.url?.path ?? "").split(separator: "/").map(String.init)
+        if parts.count >= 3, parts[0] == "repos" { return "\(parts[1])/\(parts[2])" }
+        if parts.first == "search" { return "search" }
+        return "GitHub"
+    }
+
+    /// Seconds to wait before retrying a thrown read error, or nil if it is not
+    /// retryable (or a rate-limit wait would exceed the cap → surface instead).
+    func retryDelay(for error: GitHubClientError, attempt: Int) -> TimeInterval? {
+        switch error {
+        case .network:
+            return backoffDelay(attempt: attempt)
+        case .rateLimited(let retryAfter):
+            if let retryAfter { return retryAfter <= Self.rateLimitWaitCap ? retryAfter : nil }
+            return min(backoffDelay(attempt: attempt), Self.rateLimitWaitCap)
+        default:
+            return nil
+        }
+    }
+
+    /// Exponential backoff with full jitter: base 0.5s, ×2 per attempt, cap 8s.
+    func backoffDelay(attempt: Int) -> TimeInterval {
+        let raw = min(8.0, 0.5 * pow(2.0, Double(attempt - 1)))
+        return jitter() * raw
+    }
+
+    private static func nanos(_ seconds: TimeInterval) -> UInt64 {
+        UInt64(max(0, seconds) * 1_000_000_000)
+    }
+
+    // MARK: Guarded write retry
+
+    /// Retries a value-returning WRITE on a transient (5xx/network) error, but
+    /// only after `verify` confirms it did NOT already land — a transient error
+    /// can mask a write that actually succeeded, so a blind re-issue could act
+    /// twice. `verify` returns the result if the write already happened, else nil.
+    private func withWriteRetry<T>(label: String = "a write",
+                                   verify: () async throws -> T?,
+                                   perform: () async throws -> T) async throws -> T {
+        let id = UUID()
+        defer { retry?.clear(id: id) }
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                return try await perform()
+            } catch let error as GitHubClientError {
+                if let landed = try? await verify() { return landed }
+                guard Self.isTransientMergeError(error), attempt < 3 else { throw error }
+                retry?.begin(id: id, .init(label: label, attempt: attempt + 1, maxAttempts: 3))
+                try await Task.sleep(nanoseconds: Self.nanos(backoffDelay(attempt: attempt)))
+            }
+        }
+    }
+
+    /// As `withWriteRetry`, for void-returning writes. `landed` returns true when
+    /// a re-check shows the write already took effect.
+    private func withVoidWriteRetry(label: String = "a write",
+                                    landed: () async throws -> Bool,
+                                    perform: () async throws -> Void) async throws {
+        let id = UUID()
+        defer { retry?.clear(id: id) }
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                try await perform(); return
+            } catch let error as GitHubClientError {
+                if (try? await landed()) == true { return }
+                guard Self.isTransientMergeError(error), attempt < 3 else { throw error }
+                retry?.begin(id: id, .init(label: label, attempt: attempt + 1, maxAttempts: 3))
+                try await Task.sleep(nanoseconds: Self.nanos(backoffDelay(attempt: attempt)))
+            }
+        }
+    }
+
+    /// Retry driver: idempotent reads (GET) retry transient 5xx / network /
+    /// rate-limit errors with bounded backoff; writes (non-GET) pass straight to
+    /// performFetch — they are guarded with per-endpoint re-checks instead,
+    /// because a blind re-issue could act twice. Backoff sleeps are
+    /// cancellation-aware (Task.sleep), so the run watchdog can pre-empt them.
     private func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let isRead = (request.httpMethod ?? "GET").uppercased() == "GET"
+        guard isRead else { return try await performFetch(request) }
+
+        let id = UUID()
+        let label = Self.retryLabel(request)
+        defer { retry?.clear(id: id) }
+        let deadline = Date().addingTimeInterval(Self.readRetryDeadline)
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                let (data, http) = try await performFetch(request)
+                // 5xx is surfaced as a returned status here (fetchJSON turns it
+                // into .http later) — retry while attempts and time remain.
+                if Self.isRetryableStatus(http.statusCode), attempt < Self.maxReadAttempts {
+                    let delay = backoffDelay(attempt: attempt)
+                    guard Date().addingTimeInterval(delay) < deadline else { return (data, http) }
+                    retry?.begin(id: id, .init(label: label, attempt: attempt + 1, maxAttempts: Self.maxReadAttempts))
+                    try await Task.sleep(nanoseconds: Self.nanos(delay))
+                    continue
+                }
+                return (data, http)
+            } catch let error as GitHubClientError {
+                guard let delay = retryDelay(for: error, attempt: attempt),
+                      attempt < Self.maxReadAttempts,
+                      Date().addingTimeInterval(delay) < deadline else { throw error }
+                retry?.begin(id: id, .init(label: label, attempt: attempt + 1, maxAttempts: Self.maxReadAttempts))
+                try await Task.sleep(nanoseconds: Self.nanos(delay))
+            }
+        }
+    }
+
+    /// One HTTP round-trip: rate-limit accounting plus the 403/429 rate-limit
+    /// classification. Every read and write funnels through here.
+    private func performFetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
@@ -274,54 +429,79 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
 
     public func createBranch(repo: String, name: String, fromSha: String) async throws -> String {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
-        let json = try await fetchJSON(try mutatingRequest(
-            method: "POST", path: "repos/\(repo)/git/refs",
-            body: ["ref": "refs/heads/\(name)", "sha": fromSha]))
-        guard let dict = json as? [String: Any],
-              let object = dict["object"] as? [String: Any],
-              let sha = object["sha"] as? String else {
-            throw GitHubClientError.invalidResponse("create-ref API returned unexpected shape")
-        }
-        return sha
+        return try await withWriteRetry(
+            verify: {
+                // Did the ref get created at the expected sha despite the error?
+                let existing = try await self.getRef(repo: repo, ref: "heads/\(name)")
+                return existing == fromSha ? fromSha : nil
+            },
+            perform: {
+                let json = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "POST", path: "repos/\(repo)/git/refs",
+                    body: ["ref": "refs/heads/\(name)", "sha": fromSha]))
+                guard let dict = json as? [String: Any],
+                      let object = dict["object"] as? [String: Any],
+                      let sha = object["sha"] as? String else {
+                    throw GitHubClientError.invalidResponse("create-ref API returned unexpected shape")
+                }
+                return sha
+            })
     }
 
     public func putContent(repo: String, path: String, content: String,
                            branch: String, message: String) async throws -> String {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
-        // The contents API needs the existing blob sha when updating.
-        var body: [String: Any] = [
-            "message": message,
-            "content": Data(content.utf8).base64EncodedString(),
-            "branch": branch,
-        ]
-        let existing = try await fetchJSON(
-            try request(path: "repos/\(repo)/contents/\(path)",
-                        query: [URLQueryItem(name: "ref", value: branch)]),
-            allow404: true)
-        if let dict = existing as? [String: Any], let sha = dict["sha"] as? String {
-            body["sha"] = sha
-        }
-        let json = try await fetchJSON(try mutatingRequest(
-            method: "PUT", path: "repos/\(repo)/contents/\(path)", body: body))
-        guard let dict = json as? [String: Any],
-              let commit = dict["commit"] as? [String: Any],
-              let sha = commit["sha"] as? String else {
-            throw GitHubClientError.invalidResponse("contents API returned unexpected shape for \(path)")
-        }
-        return sha
+        return try await withWriteRetry(
+            verify: {
+                // If the branch already holds exactly this content, the PUT
+                // landed — re-PUTting would make a duplicate commit. The commit
+                // sha is only used for audit detail, so a marker suffices.
+                let current = try await self.getContent(repo: repo, path: path, ref: branch)
+                return current == content ? "(already-applied)" : nil
+            },
+            perform: {
+                // The contents API needs the existing blob sha when updating.
+                var body: [String: Any] = [
+                    "message": message,
+                    "content": Data(content.utf8).base64EncodedString(),
+                    "branch": branch,
+                ]
+                let existing = try await self.fetchJSON(
+                    try self.request(path: "repos/\(repo)/contents/\(path)",
+                                     query: [URLQueryItem(name: "ref", value: branch)]),
+                    allow404: true)
+                if let dict = existing as? [String: Any], let sha = dict["sha"] as? String {
+                    body["sha"] = sha
+                }
+                let json = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "PUT", path: "repos/\(repo)/contents/\(path)", body: body))
+                guard let dict = json as? [String: Any],
+                      let commit = dict["commit"] as? [String: Any],
+                      let sha = commit["sha"] as? String else {
+                    throw GitHubClientError.invalidResponse("contents API returned unexpected shape for \(path)")
+                }
+                return sha
+            })
     }
 
     public func createPR(repo: String, head: String, base: String,
                          title: String, body: String) async throws -> PullRequestRef {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
-        let json = try await fetchJSON(try mutatingRequest(
-            method: "POST", path: "repos/\(repo)/pulls",
-            body: ["title": title, "head": head, "base": base, "body": body]))
-        guard let dict = json as? [String: Any],
-              let pr = Self.pullRequest(from: dict, repo: repo) else {
-            throw GitHubClientError.invalidResponse("pulls API returned unexpected shape")
-        }
-        return pr
+        return try await withWriteRetry(
+            verify: {
+                // Did an open PR for this head already get created?
+                try await self.listPRs(repo: repo, head: head, state: "open").first
+            },
+            perform: {
+                let json = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "POST", path: "repos/\(repo)/pulls",
+                    body: ["title": title, "head": head, "base": base, "body": body]))
+                guard let dict = json as? [String: Any],
+                      let pr = Self.pullRequest(from: dict, repo: repo) else {
+                    throw GitHubClientError.invalidResponse("pulls API returned unexpected shape")
+                }
+                return pr
+            })
     }
 
     public func getPR(repo: String, number: Int) async throws -> PullRequestRef {
@@ -344,6 +524,8 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         // re-PUT — that would risk acting twice); otherwise back off and retry,
         // bounded. Non-transient errors (e.g. 409 head moved) surface at once.
         let maxAttempts = 3
+        let id = UUID()
+        defer { retry?.clear(id: id) }
         var attempt = 0
         while true {
             attempt += 1
@@ -366,7 +548,8 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
                     return mergedSha
                 }
                 guard Self.isTransientMergeError(error), attempt < maxAttempts else { throw error }
-                try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
+                retry?.begin(id: id, .init(label: "merge PR #\(number)", attempt: attempt + 1, maxAttempts: maxAttempts))
+                try await Task.sleep(nanoseconds: Self.nanos(backoffDelay(attempt: attempt)))
             }
         }
     }
@@ -393,17 +576,52 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
 
     public func closePR(repo: String, number: Int) async throws {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
-        _ = try await fetchJSON(try mutatingRequest(
-            method: "PATCH", path: "repos/\(repo)/pulls/\(number)",
-            body: ["state": "closed"]))
+        try await withVoidWriteRetry(
+            landed: {
+                // Already closed/merged? Then the PATCH landed.
+                try await self.getPR(repo: repo, number: number).state != "open"
+            },
+            perform: {
+                _ = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "PATCH", path: "repos/\(repo)/pulls/\(number)",
+                    body: ["state": "closed"]))
+            })
+    }
+
+    public func editPR(repo: String, number: Int, body: String) async throws {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        try await withVoidWriteRetry(
+            landed: {
+                // Body already matches? Then the PATCH landed (re-PATCH is also
+                // idempotent, so this just avoids a redundant write).
+                try await self.getPR(repo: repo, number: number).body == body
+            },
+            perform: {
+                _ = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "PATCH", path: "repos/\(repo)/pulls/\(number)",
+                    body: ["body": body]))
+            })
     }
 
     public func deleteBranch(repo: String, name: String) async throws {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
-        // DELETE returns 204 with an empty body — bypass the JSON decode.
-        var request = try request(path: "repos/\(repo)/git/refs/heads/\(name)")
-        request.httpMethod = "DELETE"
-        _ = try await fetch(request)
+        try await withVoidWriteRetry(
+            landed: {
+                // Gone already? Then the DELETE landed.
+                try await self.getRef(repo: repo, ref: "heads/\(name)") == nil
+            },
+            perform: {
+                // DELETE returns 204 with an empty body — bypass the JSON decode.
+                var request = try self.request(path: "repos/\(repo)/git/refs/heads/\(name)")
+                request.httpMethod = "DELETE"
+                let (_, http) = try await self.fetch(request)
+                // fetch() doesn't throw on a 5xx for a non-GET (only on
+                // network/rate-limit), so surface a transient gateway error here
+                // — otherwise the write-retry could never see it.
+                if Self.isRetryableStatus(http.statusCode) {
+                    throw GitHubClientError.http(http.statusCode, "delete-ref transient failure")
+                }
+            })
     }
 
     private static func pullRequest(from json: [String: Any], repo: String) -> PullRequestRef? {
@@ -417,6 +635,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
                               headSha: head?["sha"] as? String ?? "",
                               state: merged ? "merged" : rawState,
                               url: json["html_url"] as? String ?? "",
-                              mergeCommitSha: json["merge_commit_sha"] as? String)
+                              mergeCommitSha: json["merge_commit_sha"] as? String,
+                              body: json["body"] as? String)
     }
 }

@@ -127,7 +127,8 @@ struct MainView: View {
                         // mid-generation would execute a truncated script.
                         .disabled(model.scriptText.isEmpty || model.validating || model.generating
                                   || (model.writeArmed && !model.canArmWrites)
-                                  || (model.writeArmed && model.armTargets.isEmpty))
+                                  || (model.writeArmed && model.armTargets.isEmpty)
+                                  || !model.prFieldsComplete)
                     }
                 }
             }
@@ -203,6 +204,9 @@ struct MainView: View {
         if model.writeArmed {
             return "Apply the reviewed plan: choose repositories and confirm — this writes"
         }
+        if !model.prFieldsComplete {
+            return "Fill in the PR title and description above — they're required and become the title/body of every PR this job opens"
+        }
         return model.phase == .check
             ? "Validate and run the script (the find phase is read-only)"
             : "Run the script in dry-run mode — writes are recorded as a reviewable plan, nothing is written"
@@ -225,7 +229,7 @@ struct ApplySheet: View {
                 .foregroundStyle(.red)
 
             Text(isMerge
-                    ? "The reviewed plan re-runs with writes enabled, acting on the \(count) PR\(count == 1 ? "" : "s") in this job's registry. Only PRs you approved are merged; a PR whose head moved since you approved it halts with nothing done."
+                    ? "The reviewed plan re-runs with writes enabled, acting on the \(count) PR\(count == 1 ? "" : "s") in this job's registry. Only PRs you approved are acted on; a PR whose head moved since you approved it halts with nothing done."
                     : "The reviewed dry-run plan re-runs with writes enabled, for the \(count) repositor\(count == 1 ? "y" : "ies") you selected in the table. Every write must match the reviewed plan exactly; a repository that drifted since the dry run halts with nothing written.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -237,7 +241,7 @@ struct ApplySheet: View {
                     .foregroundStyle(.orange)
             } else {
                 Label(isMerge
-                        ? "Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Approved PRs are squash-merged and their branches deleted."
+                        ? "Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Approved PRs are acted on per the reviewed plan (e.g. squash-merged or closed) and job branches cleaned up."
                         : "Writes go to: LIVE GITHUB — organisation \"\(model.settings.organisation)\". Branches and PRs will really be created.",
                       systemImage: "bolt.horizontal.circle.fill")
                     .font(.callout.weight(.semibold))
@@ -266,12 +270,12 @@ struct ApplySheet: View {
     }
 }
 
-/// The workflow's spine in the title bar: Find ▸ Update ▸ Merge at standard
+/// The workflow's spine in the title bar: Find ▸ Update ▸ Complete at standard
 /// toolbar metrics. Chevron separators carry the direction (the
 /// path-control idiom); only the ACTIVE stage wears a tinted capsule — bold
 /// colour belongs in content, not chrome. Tints extend the app's existing
 /// language: Find blue, Update purple in dry run and red the moment writes
-/// are armed, Merge green. Each stage carries its product count.
+/// are armed, Complete green. Each stage carries its product count.
 struct PhaseFlowControl: View {
     @Environment(AppModel.self) private var model
 
@@ -289,9 +293,9 @@ struct PhaseFlowControl: View {
                   badge: model.plannedRepoCount,
                   help: "Update scripts dry-run into a reviewable plan; arm writes via Apply (⌘2)")
             chevron
-            stage(.merge, label: "Merge", systemImage: "arrow.triangle.merge",
+            stage(.merge, label: "Complete", systemImage: "flag.checkered",
                   badge: model.registryPRCount,
-                  help: "Approve job PRs, then merge scripts act on this job's artifacts only (⌘3)")
+                  help: "Approve job PRs, then the script acts on this job's artifacts only — merge or cancel (⌘3)")
         }
         // The principal toolbar slot compresses its item once the badges
         // appear, truncating the active stage's label — refuse compression;
@@ -448,6 +452,11 @@ struct EnvironmentFooter: View {
             if let quota = model.quotaText {
                 Label(quota, systemImage: "gauge.with.needle")
                     .help("GitHub API quota remaining")
+            }
+            if let retry = model.retryText {
+                Label(retry, systemImage: "arrow.clockwise")
+                    .foregroundStyle(.orange)
+                    .help("Retrying a transient GitHub error — the run is grinding through it, not hung")
             }
             Spacer()
             SettingsLink {

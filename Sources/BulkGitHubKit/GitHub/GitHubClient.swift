@@ -68,5 +68,8 @@ public protocol GitHubClient: Sendable {
     /// rejects when the branch moved). Returns the merge commit SHA.
     func mergePR(repo: String, number: Int, expectedHeadSha: String) async throws -> String
     func closePR(repo: String, number: Int) async throws
+    /// Replace a PR's body after opening. The engine restricts this to the
+    /// job's own registry PRs before any call is made.
+    func editPR(repo: String, number: Int, body: String) async throws
     func deleteBranch(repo: String, name: String) async throws
 }

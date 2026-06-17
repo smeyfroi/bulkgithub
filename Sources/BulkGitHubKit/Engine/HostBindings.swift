@@ -56,10 +56,13 @@ enum HostBindings {
                         limiter: AsyncSemaphore,
                         cancel: CancelBox,
                         vmQueue: DispatchQueue,
-                        writeMode: EngineConfiguration.WriteMode = .dryRun) {
+                        writeMode: EngineConfiguration.WriteMode = .dryRun,
+                        prTitleOverride: String? = nil,
+                        prBodyOverride: String? = nil) {
         installGitHub(in: context, phase: phase, github: github, organisation: organisation,
                       collector: collector, limiter: limiter, cancel: cancel, vmQueue: vmQueue,
-                      writeMode: writeMode)
+                      writeMode: writeMode,
+                      prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
         installJob(in: context, params: params, collector: collector)
         installParse(in: context)
         installConsole(in: context, collector: collector)
@@ -71,7 +74,9 @@ enum HostBindings {
                                       github: GitHubClient, organisation: String,
                                       collector: JobCollector, limiter: AsyncSemaphore,
                                       cancel: CancelBox, vmQueue: DispatchQueue,
-                                      writeMode: EngineConfiguration.WriteMode = .dryRun) {
+                                      writeMode: EngineConfiguration.WriteMode = .dryRun,
+                                      prTitleOverride: String? = nil,
+                                      prBodyOverride: String? = nil) {
         guard let gh = JSValue(newObjectIn: context) else { return }
 
         let listOrgRepos: @convention(block) () -> JSValue = {
@@ -81,7 +86,7 @@ enum HostBindings {
                 collector.registerCandidates(repos)
                 let detail = repos.count == all.count
                     ? "→ \(repos.count) repos"
-                    : "→ \(repos.count) of \(all.count) repos (canary target)"
+                    : "→ \(repos.count) of \(all.count) repos (scoped)"
                 collector.audit(kind: "gh.listOrgRepos", repo: nil, detail: detail)
                 return repos.map(\.scriptValue)
             }
@@ -218,10 +223,12 @@ enum HostBindings {
             switch writeMode {
             case .dryRun:
                 installRecordingWrites(on: gh, collector: collector,
-                                       limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+                                       limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                       prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             case .armed:
                 installArmedWrites(on: gh, github: github, collector: collector,
-                                   limiter: limiter, cancel: cancel, vmQueue: vmQueue)
+                                   limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                   prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             }
         }
 
@@ -238,7 +245,9 @@ enum HostBindings {
 
     private static func installRecordingWrites(on gh: JSValue, collector: JobCollector,
                                                limiter: AsyncSemaphore, cancel: CancelBox,
-                                               vmQueue: DispatchQueue) {
+                                               vmQueue: DispatchQueue,
+                                               prTitleOverride: String? = nil,
+                                               prBodyOverride: String? = nil) {
         let createBranch: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, nameValue, shaValue in
             guard let fullName = repoName(repoValue) else {
                 return rejectedPromise("createBranch: repo is required")
@@ -294,10 +303,14 @@ enum HostBindings {
             }
             guard let opts = optsValue, opts.isObject,
                   let head = stringArg(opts.objectForKeyedSubscript("head")),
-                  let title = stringArg(opts.objectForKeyedSubscript("title")),
-                  let body = stringArg(opts.objectForKeyedSubscript("body")) else {
+                  let rawTitle = stringArg(opts.objectForKeyedSubscript("title")),
+                  let rawBody = stringArg(opts.objectForKeyedSubscript("body")) else {
                 return rejectedPromise("createPR: opts { head, title, body } are required")
             }
+            // Host-authoritative PR title/body: the user's reviewed fields win
+            // over whatever the script passed, when set.
+            let title = (prTitleOverride?.isEmpty == false) ? prTitleOverride! : rawTitle
+            let body = (prBodyOverride?.isEmpty == false) ? prBodyOverride! : rawBody
             guard head.hasPrefix("bulkgh/") else {
                 return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
             }
@@ -334,7 +347,9 @@ enum HostBindings {
     private static func installArmedWrites(on gh: JSValue, github: GitHubClient,
                                            collector: JobCollector,
                                            limiter: AsyncSemaphore, cancel: CancelBox,
-                                           vmQueue: DispatchQueue) {
+                                           vmQueue: DispatchQueue,
+                                           prTitleOverride: String? = nil,
+                                           prBodyOverride: String? = nil) {
         @Sendable func preflight(_ repo: String) throws {
             if collector.isOutsideCanary(repo) {
                 collector.haltRepo(repo, status: .skipped,
@@ -457,10 +472,15 @@ enum HostBindings {
             }
             guard let opts = optsValue, opts.isObject,
                   let head = stringArg(opts.objectForKeyedSubscript("head")),
-                  let title = stringArg(opts.objectForKeyedSubscript("title")),
-                  let body = stringArg(opts.objectForKeyedSubscript("body")) else {
+                  let rawTitle = stringArg(opts.objectForKeyedSubscript("title")),
+                  let rawBody = stringArg(opts.objectForKeyedSubscript("body")) else {
                 return rejectedPromise("createPR: opts { head, title, body } are required")
             }
+            // Host-authoritative PR title/body: the user's reviewed fields win
+            // over whatever the script passed, when set. Applied identically to
+            // the dry-run path so the recorded plan and armed conformance match.
+            let title = (prTitleOverride?.isEmpty == false) ? prTitleOverride! : rawTitle
+            let body = (prBodyOverride?.isEmpty == false) ? prBodyOverride! : rawBody
             guard head.hasPrefix("bulkgh/") else {
                 return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
             }
@@ -632,8 +652,20 @@ enum HostBindings {
                 let action = PlannedAction.mergePR(number: number, expectedHeadSha: expectedHeadSha)
                 if armed {
                     try conform(fullName, action)
-                    let sha = try await github.mergePR(repo: fullName, number: number,
+                    let sha: String
+                    do {
+                        sha = try await github.mergePR(repo: fullName, number: number,
                                                        expectedHeadSha: expectedHeadSha)
+                    } catch let GitHubClientError.http(code, _) where code == 405 || code == 409 {
+                        // 405 = the branch conflicts with base (not mergeable);
+                        // 409 = head moved. Surface per-repo as .conflicted with
+                        // an actionable reason rather than failing the whole run.
+                        let reason = code == 405
+                            ? "PR #\(number) can't be merged — the branch conflicts with the base. Resolve it (or update the branch from base) on GitHub, then re-approve and re-run Complete."
+                            : "PR #\(number) head moved — re-review and approve again."
+                        collector.haltRepo(fullName, status: .conflicted, reason: reason)
+                        throw GitHubClientError.http(code, "PR #\(number) in \(fullName) is not mergeable")
+                    }
                     collector.consumeNextAction(repo: fullName)
                     collector.upsert(repo: collector.repo(named: fullName), status: .merged,
                                      reason: "PR #\(number) squash-merged as \(String(sha.prefix(12)))")
@@ -684,6 +716,43 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(closePR, to: AnyObject.self),
                      forKeyedSubscript: "closePR" as NSString)
+
+        let editPR: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, numberValue, bodyValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("editPR: repo is required")
+            }
+            guard let numberValue, numberValue.isNumber else {
+                return rejectedPromise("editPR: PR number is required")
+            }
+            let number = Int(numberValue.toInt32())
+            guard let body = stringArg(bodyValue) else {
+                return rejectedPromise("editPR: body is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard collector.isRegistryPR(repo: fullName, number: number) else {
+                    throw GitHubClientError.http(403,
+                        "PR #\(number) in \(fullName) is not in this job's artifact registry")
+                }
+                let action = PlannedAction.editPR(number: number, body: body)
+                if armed {
+                    try conform(fullName, action)
+                    try await github.editPR(repo: fullName, number: number, body: body)
+                    collector.consumeNextAction(repo: fullName)
+                    collector.upsert(repo: collector.repo(named: fullName), status: .prRaised,
+                                     reason: "PR #\(number) body updated")
+                    collector.audit(kind: "write.editPR", repo: fullName,
+                                    detail: "#\(number) body updated (\(body.count) chars) (ARMED)")
+                } else {
+                    collector.recordAction(repo: fullName, action)
+                    collector.audit(kind: "plan.editPR", repo: fullName,
+                                    detail: "#\(number) body (\(body.count) chars) (dry-run)")
+                }
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(editPR, to: AnyObject.self),
+                     forKeyedSubscript: "editPR" as NSString)
 
         let deleteBranch: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, nameValue in
             guard let fullName = repoName(repoValue) else {

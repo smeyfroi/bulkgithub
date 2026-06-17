@@ -121,7 +121,14 @@ public enum PromptLibrary {
     14. Update scripts follow this shape per repo: gh.getRef on the default \
     branch, one gh.createBranch (the name MUST start with "bulkgh/" — \
     host-enforced), gh.putContent per changed file (always gh.getContent \
-    first so the plan can show a diff), then a single gh.createPR. Do NOT \
+    first so the plan can show a diff), then a single gh.createPR. The \
+    createPR title and body MUST come from meta.params.prTitle and \
+    meta.params.prBody — declare BOTH as params with concise, human-readable \
+    defaults that summarise the change (a one-line title; a short descriptive \
+    body), and never inline literal title/body strings into gh.createPR. The \
+    app surfaces these as the user's editable, REQUIRED "PR Title" / \
+    "Description" fields, so always declare them and never leave them empty. \
+    Do NOT \
     call job.reportMatch from update scripts — the recorded plan and its \
     diffs are the narrative; use job.log/job.progress for commentary and \
     job.skip/job.error for outcomes.

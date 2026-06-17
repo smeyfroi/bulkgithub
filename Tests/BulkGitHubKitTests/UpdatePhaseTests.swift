@@ -222,6 +222,30 @@ struct StateAndCanaryTests {
         #expect(web?.status == .skipped)
         #expect(web?.reason?.contains("canary") == true)
     }
+
+    @Test("carry-forward: an update scoped to Find's matches never sees the skipped repos (#4/#6)")
+    func carryForwardScopesUpdateToMatches() async throws {
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let recipe = try #require(ResourceLocator.recipe(named: "remove_line_with_string"))
+        let validated = try pipeline.validate(source: recipe)
+
+        // The set Find matched — exactly what AppModel carries into the update
+        // run via configuration.targetRepos.
+        var configuration = EngineConfiguration()
+        configuration.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
+        let outcome = await ScriptEngine().run(javaScript: validated.javaScript,
+                                               phase: .update,
+                                               params: validated.meta.params,
+                                               github: FixtureGitHubClient.demo(),
+                                               organisation: "example-org",
+                                               configuration: configuration,
+                                               onEvent: { _ in })
+        // Only the two matched repos are touched. The other five demo repos —
+        // which an unscoped run would enumerate, fetch, and then skip — never
+        // appear at all (the fix for skipped-repos-reappearing + slow updates).
+        #expect(Set(outcome.results.map(\.id)) == ["example-org/web-frontend", "example-org/data-pipeline"])
+        #expect(outcome.results.count == 2)
+    }
 }
 
 @Suite("Rate limit and recipe catalog")
@@ -245,7 +269,7 @@ struct SupportingFeatureTests {
 
     @Test("every catalog recipe resolves and declares its advertised phase")
     func catalogConsistency() throws {
-        #expect(RecipeCatalog.all.count == 10)
+        #expect(RecipeCatalog.all.count == 11)
         for recipe in RecipeCatalog.all {
             let source = try #require(recipe.source, "missing source for \(recipe.id)")
             #expect(ValidationPipeline.sniffPhase(from: source) == recipe.phase,

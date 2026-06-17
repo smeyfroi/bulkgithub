@@ -29,6 +29,7 @@ interface PR {
   readonly headSha: string;
   readonly state: "open" | "closed" | "merged";
   readonly url: string;
+  readonly body?: string;
 }
 
 interface Evidence {

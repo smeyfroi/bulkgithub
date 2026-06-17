@@ -11,6 +11,9 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
     public var searchResults: [RepoRef]
     /// fullName -> error message thrown from getContent
     public var errorInjections: [String: String]
+    /// PR numbers the fixture treats as having a merge conflict (405), for
+    /// exercising the per-repo conflict-surfacing path.
+    public var unmergeablePRs: Set<Int> = []
     /// Artificial latency per call, for cancellation tests and UI realism.
     public var delay: Duration
 
@@ -203,10 +206,10 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
                          title: String, body: String) async throws -> PullRequestRef {
         record("createPR(\(repo), \(head))")
         try await pause()
-        return try doCreatePR(repo: repo, head: head)
+        return try doCreatePR(repo: repo, head: head, body: body)
     }
 
-    private func doCreatePR(repo: String, head: String) throws -> PullRequestRef {
+    private func doCreatePR(repo: String, head: String, body: String) throws -> PullRequestRef {
         lock.lock(); defer { lock.unlock() }
         guard !_pullRequests.contains(where: { $0.repo == repo && $0.headRef == head && $0.state == "open" }) else {
             throw GitHubClientError.http(422, "A pull request already exists for \(head)")
@@ -216,7 +219,8 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         let pr = PullRequestRef(repo: repo, number: number, headRef: head,
                                 headSha: _branches[repo]?[head] ?? Self.fakeSha("\(repo)#\(head)"),
                                 state: "open",
-                                url: "https://github.com/\(repo)/pull/\(number)")
+                                url: "https://github.com/\(repo)/pull/\(number)",
+                                body: body)
         _pullRequests.append(pr)
         return pr
     }
@@ -245,6 +249,9 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         guard _pullRequests[index].state == "open" else {
             throw GitHubClientError.http(405, "Pull request is not open")
         }
+        guard !unmergeablePRs.contains(number) else {
+            throw GitHubClientError.http(405, "Pull request is not mergeable (conflict)")
+        }
         let currentHead = _branches[repo]?[_pullRequests[index].headRef]
             ?? _pullRequests[index].headSha
         guard currentHead == expectedHeadSha else {
@@ -267,6 +274,16 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
             throw GitHubClientError.http(422, "Pull request is not open")
         }
         _pullRequests[index].state = "closed"
+    }
+
+    public func editPR(repo: String, number: Int, body: String) async throws {
+        record("editPR(\(repo), #\(number))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard let index = _pullRequests.firstIndex(where: { $0.repo == repo && $0.number == number }) else {
+            throw GitHubClientError.notFound("PR #\(number) in \(repo)")
+        }
+        _pullRequests[index].body = body
     }
 
     public func deleteBranch(repo: String, name: String) async throws {

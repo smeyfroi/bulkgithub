@@ -27,8 +27,10 @@ struct ScriptPane: View {
                         .lineLimit(2...6)
                         // The ranged lineLimit grows with content but does
                         // not reserve height — guarantee room for two full
-                        // lines so a two-line prompt never scrolls.
-                        .frame(minHeight: 40, alignment: .leading)
+                        // lines so a two-line prompt never scrolls. maxWidth
+                        // pins the field to the available width so long words
+                        // wrap instead of overflowing the row.
+                        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                         .font(.system(size: 15))
                         .textFieldStyle(.plain)
                         .focusEffectDisabled()
@@ -112,7 +114,7 @@ struct ScriptPane: View {
         switch model.phase {
         case .check: return "Describe what to find across the organisation…"
         case .update: return "Describe the change to make across matching repos…"
-        case .merge: return "Describe the merge or cancel action for this job's PRs…"
+        case .merge: return "Describe the action to take on this job's PRs — merge, close, or cancel…"
         }
     }
 
@@ -180,6 +182,13 @@ struct ParamsBar: View {
     /// generated update scripts and structural rather than job-specific.
     static let gitParamKeys: Set<String> = ["branch", "message", "commitMessage"]
 
+    /// Free-text params that deserve a full-width, multi-line editor rather
+    /// than a single-line grid cell (e.g. a PR body or description).
+    static func isLongText(_ key: String) -> Bool {
+        let lowered = key.lowercased()
+        return lowered.contains("body") || lowered.contains("description")
+    }
+
     var body: some View {
         let gitKeys = model.visibleParamKeys.filter { Self.gitParamKeys.contains($0) }
         let otherKeys = model.visibleParamKeys.filter { !Self.gitParamKeys.contains($0) }
@@ -199,7 +208,9 @@ struct ParamsBar: View {
 
     private func paramGroup(title: String, systemImage: String,
                             caption: String, keys: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let longKeys = keys.filter { Self.isLongText($0) }
+        let shortKeys = keys.filter { !Self.isLongText($0) }
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Label(title, systemImage: systemImage)
                     .font(.caption)
@@ -210,12 +221,20 @@ struct ParamsBar: View {
             }
             .help("The script declares names and defaults in meta.params and reads the effective values from job.params at run time. Edits here apply to the next run without changing the script source — changed values are marked and can be reset to the script's default.")
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 380),
-                                         spacing: 8, alignment: .topLeading)],
-                      alignment: .leading, spacing: 8) {
-                ForEach(keys, id: \.self) { key in
-                    paramField(key)
+            if !shortKeys.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 380),
+                                             spacing: 8, alignment: .topLeading)],
+                          alignment: .leading, spacing: 8) {
+                    ForEach(shortKeys, id: \.self) { key in
+                        paramField(key)
+                    }
                 }
+            }
+            // Long free-text params (e.g. a PR body) get a full-width,
+            // multi-line editor rather than a cramped grid cell.
+            ForEach(longKeys, id: \.self) { key in
+                paramField(key, multiline: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(8)
@@ -224,7 +243,7 @@ struct ParamsBar: View {
     }
 
     @ViewBuilder
-    private func paramField(_ key: String) -> some View {
+    private func paramField(_ key: String, multiline: Bool = false) -> some View {
         let edited = isEdited(key)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
@@ -247,9 +266,16 @@ struct ParamsBar: View {
                     .help("Reset to the script's default: \(model.declaredDefault(for: key) ?? "")")
                 }
             }
-            TextField(key, text: binding(for: key))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
+            if multiline {
+                TextField(key, text: binding(for: key), axis: .vertical)
+                    .lineLimit(3...12)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            } else {
+                TextField(key, text: binding(for: key))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
         }
     }
 
@@ -271,30 +297,40 @@ struct ParamsBar: View {
 /// The pull-request title and description for an update job. These are the
 /// user's authored words on the PRs the run will open, so they get a labelled
 /// card of their own — visually distinct from the param grid — instead of
-/// reading as two more anonymous params. Empty = autogenerated (the generator
-/// fills them, mirrored back into these fields after Generate).
+/// reading as two more anonymous params. Required in the update phase: the
+/// generator pre-fills them (mirrored into these fields after Generate) and the
+/// host uses them verbatim for every PR it opens — see AppModel.prFieldsComplete.
 struct PullRequestFields: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
+        let titleEmpty = model.prTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let bodyEmpty = model.prBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Label("Pull request", systemImage: "text.badge.plus")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("— title and description for the PRs this job opens (left empty, both are autogenerated)")
+                Text("— required: the title and description for every PR this job opens (pre-filled from the generated script — edit freely)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
 
-            TextField("PR title", text: $model.prTitle)
+            TextField("PR title (required)", text: $model.prTitle)
                 .textFieldStyle(.roundedBorder)
                 .font(.body)
-            TextField("PR description", text: $model.prBody, axis: .vertical)
+            TextField("PR description (required)", text: $model.prBody, axis: .vertical)
                 .lineLimit(2...4)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout)
+
+            if titleEmpty || bodyEmpty {
+                Label("Both fields are required before you can dry-run or apply this update.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)

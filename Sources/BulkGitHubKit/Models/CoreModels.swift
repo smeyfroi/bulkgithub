@@ -39,9 +39,13 @@ public struct PullRequestRef: Codable, Hashable, Sendable {
     public var mergeCommitSha: String?
     public var state: String // "open" | "closed" | "merged"
     public var url: String
+    /// The PR body/description. Optional for backward-compatible decoding of
+    /// previously-persisted refs and dry-run synthesized refs.
+    public var body: String?
 
     public init(repo: String, number: Int, headRef: String, headSha: String,
-                state: String, url: String, mergeCommitSha: String? = nil) {
+                state: String, url: String, mergeCommitSha: String? = nil,
+                body: String? = nil) {
         self.repo = repo
         self.number = number
         self.headRef = headRef
@@ -49,11 +53,14 @@ public struct PullRequestRef: Codable, Hashable, Sendable {
         self.state = state
         self.url = url
         self.mergeCommitSha = mergeCommitSha
+        self.body = body
     }
 
     public var scriptValue: [String: Any] {
-        ["repo": repo, "number": number, "headRef": headRef, "headSha": headSha,
-         "state": state, "url": url]
+        var value: [String: Any] = ["repo": repo, "number": number, "headRef": headRef,
+                                    "headSha": headSha, "state": state, "url": url]
+        if let body { value["body"] = body }
+        return value
     }
 }
 
@@ -78,6 +85,10 @@ public enum RepoStatus: String, Codable, Sendable, CaseIterable {
     case approved
     case merged
     case cancelled
+
+    /// Stable ordinal for sorting tables by status — declaration order tracks
+    /// the funnel/lifecycle (candidate → match → planned → raised → merged).
+    public var sortOrder: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
 
 public struct Evidence: Codable, Hashable, Sendable {
@@ -137,14 +148,16 @@ public enum JobPhase: String, Codable, Sendable, CaseIterable {
     case update
     case merge
 
-    /// User-facing phase name. The contract keeps "check" as the rawValue —
-    /// meta.phase in scripts, persistence keys, and the LLM prompt all use
-    /// it — but the UI calls the phase "Find".
+    /// User-facing phase name. The contract keeps the rawValues ("check",
+    /// "merge") stable — meta.phase in scripts, persistence keys, and the LLM
+    /// prompt all use them — but the UI names the phases differently. The
+    /// "merge" phase is script-driven and may merge, cancel/close, or take any
+    /// finalizing action (see ADR 0002), so it's named action-neutrally.
     public var displayName: String {
         switch self {
         case .check: return "Find"
         case .update: return "Update"
-        case .merge: return "Merge"
+        case .merge: return "Complete"
         }
     }
 }
@@ -281,6 +294,7 @@ public enum PlannedAction: Codable, Hashable, Sendable {
     // Merge phase: these operate only on the job's own artifacts.
     case mergePR(number: Int, expectedHeadSha: String)
     case closePR(number: Int)
+    case editPR(number: Int, body: String)
     case deleteBranch(name: String)
 
     public var summary: String {
@@ -295,6 +309,8 @@ public enum PlannedAction: Codable, Hashable, Sendable {
             return "Squash-merge PR #\(number) at \(String(sha.prefix(12)))"
         case .closePR(let number):
             return "Close PR #\(number) without merging"
+        case .editPR(let number, _):
+            return "Edit body of PR #\(number)"
         case .deleteBranch(let name):
             return "Delete branch \(name)"
         }
@@ -405,8 +421,11 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var webHost: String = "https://github.com"
     public var apiHost: String = "https://api.github.com"
     public var aiModel: String = ""        // empty = client default
-    public var useMockLLM: Bool = true
-    public var useFixtureGitHub: Bool = true
+    // Fresh installs default to LIVE — both the model and GitHub. A returning
+    // user's saved choices in state.json still win; these defaults only apply
+    // when no snapshot exists.
+    public var useMockLLM: Bool = false
+    public var useFixtureGitHub: Bool = false
     public var maxConcurrentOps: Int = 8
     public var syncSliceSeconds: Double = 2.0
     public var maxSyncBudgetSeconds: Double = 60.0

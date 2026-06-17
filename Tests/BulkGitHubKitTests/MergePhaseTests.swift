@@ -266,4 +266,118 @@ struct MergePhaseTests {
         let validated = try pipeline.validate(source: mergeScript)
         #expect(validated.meta.phase == .merge)
     }
+
+    @Test("editPR: dry-run records the plan; armed updates the PR body (registry-scoped)")
+    func editPRFlow() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (artifacts, prs) = try await appliedJob(client: client)
+        #expect(prs.count == 2)
+
+        let script = """
+        const meta = { title: "edit job PR bodies", phase: "merge" as const, apiVersion: 1, params: {} };
+        async function main(): Promise<void> {
+          const prs = await gh.listJobPRs();
+          for (const pr of prs) {
+            await gh.editPR(pr.repo, pr.number, `Handled by job — PR #${pr.number}`);
+          }
+        }
+        """
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: script)
+        #expect(validated.meta.phase == .merge)
+
+        // Dry run: an editPR planned per PR; nothing is mutated yet.
+        var dryConfig = EngineConfiguration()
+        dryConfig.artifactRegistry = artifacts
+        let plan = await ScriptEngine().run(javaScript: validated.javaScript, phase: .merge,
+                                            params: validated.meta.params, github: client,
+                                            organisation: "example-org", configuration: dryConfig,
+                                            onEvent: { _ in })
+        #expect(plan.status == .completed)
+        let edits = plan.plannedActions.values.flatMap { $0 }.filter {
+            if case .editPR = $0 { return true } else { return false }
+        }
+        #expect(edits.count == prs.count)
+        #expect(client.createdPRs.allSatisfy { ($0.body ?? "").contains("Handled by job") == false })
+
+        // Armed: conforms to the plan and applies the edits to the fixture PRs.
+        var armedConfig = dryConfig
+        armedConfig.writeMode = .armed
+        armedConfig.targetRepos = Set(prs.map(\.repo))
+        armedConfig.referencePlan = plan.plannedActions
+        let armed = await ScriptEngine().run(javaScript: validated.javaScript, phase: .merge,
+                                             params: validated.meta.params, github: client,
+                                             organisation: "example-org", configuration: armedConfig,
+                                             onEvent: { _ in })
+        #expect(armed.status == .completed)
+        for pr in client.createdPRs {
+            #expect(pr.body == "Handled by job — PR #\(pr.number)")
+        }
+        #expect(armed.auditEvents.filter { $0.kind == "write.editPR" }.count == prs.count)
+    }
+
+    @Test("a merge conflict (405) halts just that repo as conflicted, not the run")
+    func mergeConflictSurfacesPerRepo() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (artifacts, prs) = try await appliedJob(client: client)
+        let conflicted = try #require(prs.first { $0.repo == "example-org/web-frontend" })
+        client.unmergeablePRs = [conflicted.number]   // this PR has a merge conflict
+        let merge = try validatedMerge(named: "merge_approved_prs")
+
+        var dryConfig = EngineConfiguration()
+        dryConfig.artifactRegistry = artifacts
+        dryConfig.approvals = approvals(for: prs)
+        let plan = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
+                                            params: merge.meta.params, github: client,
+                                            organisation: "example-org", configuration: dryConfig,
+                                            onEvent: { _ in })
+        var armedConfig = dryConfig
+        armedConfig.writeMode = .armed
+        armedConfig.targetRepos = ["example-org/web-frontend", "example-org/data-pipeline"]
+        armedConfig.referencePlan = plan.plannedActions
+        let armed = await ScriptEngine().run(javaScript: merge.javaScript, phase: .merge,
+                                             params: merge.meta.params, github: client,
+                                             organisation: "example-org", configuration: armedConfig,
+                                             onEvent: { _ in })
+        let web = armed.results.first { $0.id == "example-org/web-frontend" }
+        let data = armed.results.first { $0.id == "example-org/data-pipeline" }
+        #expect(web?.status == .conflicted)
+        #expect(web?.reason?.contains("conflicts with the base") == true)
+        #expect(data?.status == .merged)   // the other repo still merged — run wasn't aborted
+    }
+
+    @Test("change_pr_body recipe: the body param replaces every job PR's body")
+    func changePRBodyRecipe() async throws {
+        let client = FixtureGitHubClient.demo()
+        let (artifacts, prs) = try await appliedJob(client: client)
+        let recipe = try validatedMerge(named: "change_pr_body")
+        var params = recipe.meta.params
+        params["body"] = "New PR description from the param."
+
+        // Dry run: an editPR per PR carrying the param text.
+        var dryConfig = EngineConfiguration()
+        dryConfig.artifactRegistry = artifacts
+        let plan = await ScriptEngine().run(javaScript: recipe.javaScript, phase: .merge,
+                                            params: params, github: client,
+                                            organisation: "example-org", configuration: dryConfig,
+                                            onEvent: { _ in })
+        #expect(plan.status == .completed)
+        let edits = plan.plannedActions.values.flatMap { $0 }.filter {
+            if case .editPR(_, let body) = $0 { return body == "New PR description from the param." }
+            return false
+        }
+        #expect(edits.count == prs.count)
+
+        // Armed applies them to the fixture PRs.
+        var armedConfig = dryConfig
+        armedConfig.writeMode = .armed
+        armedConfig.targetRepos = Set(prs.map(\.repo))
+        armedConfig.referencePlan = plan.plannedActions
+        let armed = await ScriptEngine().run(javaScript: recipe.javaScript, phase: .merge,
+                                             params: params, github: client,
+                                             organisation: "example-org", configuration: armedConfig,
+                                             onEvent: { _ in })
+        #expect(armed.status == .completed)
+        #expect(client.createdPRs.allSatisfy { $0.body == "New PR description from the param." })
+    }
 }
