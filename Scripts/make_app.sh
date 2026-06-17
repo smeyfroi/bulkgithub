@@ -33,7 +33,15 @@ esac
 SIGN_ARGS=(CODE_SIGN_IDENTITY="$SIGN_IDENTITY")
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
   : "${DEVELOPMENT_TEAM:?DEVELOPMENT_TEAM is required when SIGN_IDENTITY is not ad-hoc}"
-  SIGN_ARGS+=(DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" OTHER_CODE_SIGN_FLAGS="--timestamp")
+  # Manual signing: the project (and its SwiftPM resource-bundle targets) default
+  # to automatic signing, which conflicts with a manually specified Developer ID
+  # identity. Developer ID direct distribution needs no provisioning profile.
+  SIGN_ARGS+=(
+    CODE_SIGN_STYLE=Manual
+    PROVISIONING_PROFILE_SPECIFIER=""
+    DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
+    OTHER_CODE_SIGN_FLAGS="--timestamp"
+  )
 fi
 
 xcodebuild -project BulkGitHub.xcodeproj -scheme BulkGitHubApp \
