@@ -41,6 +41,8 @@ if [[ "$SIGN_IDENTITY" != "-" ]]; then
     PROVISIONING_PROFILE_SPECIFIER=""
     DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
     OTHER_CODE_SIGN_FLAGS="--timestamp"
+    # Suppress the get-task-allow debug entitlement; notarization rejects it.
+    CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
   )
 fi
 
