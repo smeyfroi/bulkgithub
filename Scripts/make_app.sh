@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
 APP="dist/BulkGitHub.app"
-VERSION="${VERSION:-0.8.0}"
+VERSION="${VERSION:-0.8.1}"
 DERIVED=".build/DerivedData"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
