@@ -22,11 +22,13 @@ toggle arms real writes only after you've reviewed the plan.
 
 ![Update phase: the find → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.png)
 
-**3 — Merge** (registry-scoped): approve the PRs the job created — each
-approval pins the head SHA — then a merge script squash-merges them and
-cleans up the branches. It can only touch this job's artifacts.
+**3 — Complete** (registry-scoped): approve the PRs the job created — each
+approval pins the head SHA — then a script squash-merges them and
+cleans up the branches. It can only touch this job's artifacts. (Metadata
+updates such as custom properties apply directly at step 2 and need no
+completion step.)
 
-![Merge phase: the approval queue over the job's PRs, with per-PR diffs and the merge plan](screenshot-merge.png)
+![Complete phase: the approval queue over the job's PRs, with per-PR diffs and the merge plan](screenshot-merge.png)
 
 - Architecture and roadmap: [plans/native-macos-bulkgithub-app-plan-v2.md](plans/native-macos-bulkgithub-app-plan-v2.md)
 - Runtime decision record: [decisions/0001-javascriptcore-as-embedded-script-runtime.md](decisions/0001-javascriptcore-as-embedded-script-runtime.md)
@@ -87,13 +89,54 @@ in-memory org): flip **Dry Run | Write** to Write, press **Apply…**, choose
 the repos, and confirm. The created branches and PRs land in the job's
 artifact registry, and write mode snaps back to Dry Run.
 
-**Merge (⌘3).** The table lists the job's PRs from the registry. Approve
+**Complete (⌘3).** The table lists the job's PRs from the registry. Approve
 them — each approval pins the PR's head SHA — then load **Merge approved
 PRs**, Dry Run to review the merge plan, and Write → Apply… to squash-merge
 and delete the branches. Consumed artifacts leave the registry; the Audit
 tab keeps the cumulative trail of everything the job did.
 
 **File > New Job (⌘N)** resets the workspace for the next campaign.
+
+## Connecting to live GitHub
+
+The offline tour above needs no credentials. To point the app at a real
+organisation, store a **GitHub token** in Settings (⌘,) — Keychain only;
+scripts can never read it. (The Anthropic API key for the LLM is a separate
+credential, stored in the same place.)
+
+Use a **fine-grained personal access token**: GitHub → Settings → Developer
+settings → **Fine-grained tokens** → *Generate new token*. Two steps trip
+everyone up, so do them first:
+
+1. **Resource owner — choose the organisation, _not_ your personal account.**
+   Organisation permissions (and custom properties) only appear when the token
+   is scoped to the org. A personal-account token is missing half the list
+   below, and a **classic** PAT has no "Custom properties" permission at all.
+2. **Repository access — select the repositories** your campaigns will touch
+   (or *All repositories* under the org).
+
+Then grant exactly these — leave everything else on *No access*:
+
+| Section | Permission | Access | What it powers |
+|---|---|---|---|
+| Repository | **Metadata** | Read-only | listing repos, default branches, per-repo property reads (mandatory on every fine-grained token) |
+| Repository | **Contents** | Read and write | reading files; creating branches, commits, deleting branches (Find + Update) |
+| Repository | **Pull requests** | Read and write | opening, merging, closing, editing PRs (Update + Complete) |
+| Repository | **Custom properties** | Read and write | *setting* custom property values |
+| Organization | **Custom properties** | Read-only | *querying* repos by custom property, and reading the org schema |
+
+**Find-only (read-only) subset:** Metadata + Contents (Read-only) is enough to
+find and inspect; add Organization → Custom properties (Read-only) for property
+queries. The write rows are only needed once you arm Update or Complete.
+
+**Two gotchas after generating it:**
+
+- If your org **requires approval** for fine-grained tokens, the token stays
+  *pending* until an org owner approves it — the app will hit 403s until then.
+- The **Custom properties** permissions are only offered if you're an org owner
+  (or hold the custom-properties manager role) for that organisation.
+
+Reference: [GitHub — permissions required for fine-grained PATs](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens).
 
 ## Layout
 
@@ -103,7 +146,7 @@ tab keeps the cumulative trail of everything the job did.
 | `Sources/BulkGitHub` | SwiftUI app: three-pane workbench, script editor, results table, console, Settings |
 | `Sources/BulkGitHubKit/Resources` | `bulkgh.d.ts` (the contract), golden recipe, bundled TypeScript compiler + ES libs |
 | `Tests/BulkGitHubKitTests` | Host-bridge contract tests, tsc-in-JSC spike tests, golden-recipe end-to-end, persistence |
-| `plans/`, `decisions/` | Plan v2 (current), superseded v1, ADR 0001 |
+| `plans/`, `decisions/` | Plan v2 (current) + feature plans, superseded v1, ADRs 0001–0003 |
 
 ## Safety model
 
@@ -126,7 +169,7 @@ only the typed host API, and that surface is phase-gated:
   duplicates), and the `bulkgh/` branch-name prefix. A partially-applied repo
   halts safely and is completed by re-running Apply — resume is gated by the
   artifact registry.
-- **Merge** scripts are registry-scoped (`bulkgh.merge.d.ts`): `listJobPRs` /
+- **Complete** scripts are registry-scoped (`bulkgh.merge.d.ts`): `listJobPRs` /
   `mergePR` / `closePR` / `deleteBranch` can only touch branches and PRs THIS
   job created. Merging additionally requires a per-PR approval that pins the
   head SHA — the head must still match at merge time (host-enforced in

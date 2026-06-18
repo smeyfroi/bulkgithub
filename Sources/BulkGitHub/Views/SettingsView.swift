@@ -31,7 +31,8 @@ struct GitHubSettingsTab: View {
 
             LabeledContent("Personal access token") {
                 VStack(alignment: .trailing, spacing: 6) {
-                    SecureField("ghp_…", text: $tokenDraft)
+                    SecureField(tokenStored ? "•••••••••• — saved, type to replace"
+                                            : "ghp_… or github_pat_…", text: $tokenDraft)
                         .frame(width: 260)
                     HStack {
                         if tokenStored {
@@ -40,11 +41,15 @@ struct GitHubSettingsTab: View {
                                 .font(.caption)
                         }
                         Button("Save") {
-                            try? model.credentials.write(.githubToken, value: tokenDraft)
+                            // Trim stray whitespace/newlines from a paste — a
+                            // trailing newline makes an otherwise-valid token
+                            // fail auth in puzzling ways.
+                            let token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            try? model.credentials.write(.githubToken, value: token)
                             tokenDraft = ""
                             tokenStored = model.credentials.read(.githubToken) != nil
                         }
-                        .disabled(tokenDraft.isEmpty)
+                        .disabled(tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         Button("Clear") {
                             try? model.credentials.delete(.githubToken)
                             tokenStored = false
@@ -62,11 +67,19 @@ struct GitHubSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button("Test") { test() }
-                        .disabled(model.settings.useFixtureGitHub)
+                        // Test verifies the stored token against the live API —
+                        // useful even in fixture mode (you check credentials
+                        // before switching it off). Only gate on having a token.
+                        .disabled(!tokenStored)
                 }
             }
 
-            Text("Find scripts need repository metadata and content read access. Applying updates and merging PRs also needs content and pull-request write access (the classic repo scope, or a fine-grained equivalent).")
+            Text("""
+            Classic (ghp_…) or fine-grained (github_pat_…) tokens both work. \
+            Find needs repository Metadata + Contents (read); Update/Complete add Contents + Pull requests (write). \
+            Custom properties need a fine-grained token owned by the organisation — Organization → Custom properties (read) \
+            and Repository → Custom properties (write). See the README for the full list.
+            """)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -126,7 +139,8 @@ struct AISettingsTab: View {
         Form {
             LabeledContent("API key") {
                 VStack(alignment: .trailing, spacing: 6) {
-                    SecureField("sk-ant-…", text: $keyDraft)
+                    SecureField(keyStored ? "•••••••••• — saved, type to replace"
+                                          : "sk-ant-…", text: $keyDraft)
                         .frame(width: 260)
                     HStack {
                         if keyStored {
@@ -159,7 +173,9 @@ struct AISettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button("Test") { test() }
-                        .disabled(model.settings.useMockLLM)
+                        // Verifies the stored key against the live API — useful
+                        // even in mock mode. Only gate on having a key.
+                        .disabled(!keyStored)
                 }
             }
 

@@ -1233,12 +1233,22 @@ final class AppModel {
             let acted = outcome.results.filter {
                 [.prRaised, .merged, .cancelled].contains($0.status)
             }
+            // Terminal metadata writes (e.g. custom properties): applied directly,
+            // no branch/PR/registry entry — so there is nothing to merge afterwards.
+            let updated = outcome.results.filter { $0.status == .updated }
             let halted = outcome.results.filter {
                 [.conflicted, .branchExists, .prExists, .blocked].contains($0.status)
             }
-            if selectedRepo == nil { selectedRepo = acted.first?.id }
-            let verb = runPhase == .merge ? "PR(s) merged or closed" : "PR(s) raised"
-            var summary = "ARMED run \(outcome.status.label) — \(acted.count) \(verb)"
+            if selectedRepo == nil { selectedRepo = acted.first?.id ?? updated.first?.id }
+            var parts: [String] = []
+            if !acted.isEmpty {
+                parts.append("\(acted.count) \(runPhase == .merge ? "PR(s) merged or closed" : "PR(s) raised")")
+            }
+            if !updated.isEmpty {
+                parts.append("\(updated.count) repo(s) updated directly — applied, no PR to merge")
+            }
+            if parts.isEmpty { parts.append("nothing written") }
+            var summary = "ARMED run \(outcome.status.label) — " + parts.joined(separator: ", ")
             if !halted.isEmpty { summary += ", \(halted.count) halted (see results)" }
             statusLine = summary
         } else {

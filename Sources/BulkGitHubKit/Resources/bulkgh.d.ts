@@ -32,6 +32,27 @@ interface PR {
   readonly body?: string;
 }
 
+/**
+ * A repository custom-property value: free-text/single-select (string),
+ * multi-select (array of strings), or unset (null). True/false properties
+ * arrive as "true"/"false" strings.
+ */
+type PropertyValue = string | string[] | null;
+
+/** One organisation custom-property definition (the schema for a value). */
+interface PropertyDef {
+  readonly name: string;
+  readonly valueType: "string" | "single_select" | "multi_select" | "true_false";
+  /** Permitted values for single/multi-select properties; null for free-text. */
+  readonly allowedValues: string[] | null;
+}
+
+/** A repository paired with its custom-property values. */
+interface RepoProperties {
+  readonly repo: Repo;
+  readonly properties: Record<string, PropertyValue>;
+}
+
 interface Evidence {
   /** Path of the file the evidence came from (must have been fetched). */
   path: string;
@@ -104,6 +125,26 @@ interface GitHub {
 
   /** PR search, automatically scoped to the configured organisation. */
   searchPRs(query: string): Promise<PR[]>;
+
+  /**
+   * Every org repository with its custom-property values — the AUTHORITATIVE
+   * way to query by custom property (e.g. "repos where ProjectType is rails").
+   * These are real stored values, not a search index, so there is no staleness
+   * to defend against: filter the result in plain code. Custom properties exist
+   * only on organisation-owned repos. Reading them earns the right to
+   * job.reportMatch a property-based match (no file fetch needed).
+   */
+  listOrgProperties(): Promise<RepoProperties[]>;
+
+  /** One repository's custom-property values (authoritative, per-repo). */
+  getProperties(repo: Repo | string): Promise<Record<string, PropertyValue>>;
+
+  /**
+   * The organisation's custom-property definitions — names, value types, and
+   * allowed values. Use it to validate a value before writing (single/
+   * multi-select values outside the allowed set are rejected).
+   */
+  listPropertyDefs(): Promise<PropertyDef[]>;
 }
 
 interface Job {

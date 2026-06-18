@@ -13,6 +13,11 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
         // recipe choice within the check phase.
         switch context.phase {
         case .update:
+            // "custom propert(y|ies)" is distinctive — set-a-property wins over
+            // the file-edit recipes.
+            if prompt.range(of: "custom propert", options: .caseInsensitive) != nil {
+                return try setPropertyScript(for: prompt)
+            }
             if prompt.range(of: #"\b(add|append|insert)\b"#,
                             options: [.regularExpression, .caseInsensitive]) != nil {
                 return try addSectionScript(for: prompt)
@@ -33,6 +38,11 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
             }
             return script
         case .check:
+            // A custom-property query is unmistakable — route it before the
+            // file-content recipes.
+            if prompt.range(of: "custom propert", options: .caseInsensitive) != nil {
+                return try findByPropertyScript(for: prompt)
+            }
             // Absence phrasing wins over presence: "does not contain" also
             // contains the word "contain".
             if prompt.range(of: #"(not contain|doesn't contain|missing|without)"#,
@@ -49,6 +59,42 @@ public final class MockLLMClient: LLMClient, @unchecked Sendable {
             }
             return try yamlKeyValueScript(for: prompt)
         }
+    }
+
+    /// "find repos where the custom property "ProjectType" is set to "rails"".
+    private func findByPropertyScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "find_repos_by_property") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let property = firstMatch(in: prompt, pattern: #"propert(?:y|ies)\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "property", value: property)
+        }
+        // "set to "x"" / "is "x"" / "= "x"" — anchored so the property name
+        // earlier in the prompt isn't mistaken for the value.
+        if let value = firstMatch(in: prompt, pattern: #"(?:set to|is|=|to)\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "value", value: value)
+        }
+        return script
+    }
+
+    /// "for all repos that contain project.json, set the custom property
+    /// "ProjectType" to the value of the "type" key".
+    private func setPropertyScript(for prompt: String) throws -> String {
+        guard var script = ResourceLocator.recipe(named: "set_property_from_json") else {
+            throw LLMClientError.invalidResponse("recipe resource missing from bundle")
+        }
+        if let file = firstMatch(in: prompt, pattern: #"([\w./+-]+\.(?:ya?ml|json|toml|txt|md))"#) {
+            script = Self.replaceParam(in: script, name: "file", value: file)
+        }
+        if let property = firstMatch(in: prompt, pattern: #"propert(?:y|ies)\s+["']([^"']+)["']"#) {
+            script = Self.replaceParam(in: script, name: "property", value: property)
+        }
+        // "the value of the "type" key" / "the "type" key".
+        if let jsonKey = firstMatch(in: prompt, pattern: #"["']([A-Za-z0-9_.-]+)["']\s+key"#)
+            ?? firstMatch(in: prompt, pattern: #"value of (?:the )?["']([A-Za-z0-9_.-]+)["']"#) {
+            script = Self.replaceParam(in: script, name: "jsonKey", value: jsonKey)
+        }
+        return script
     }
 
     private func globKeyValueScript(for prompt: String) throws -> String {

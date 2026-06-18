@@ -211,6 +211,56 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(searchPRs, to: AnyObject.self),
                      forKeyedSubscript: "searchPRs" as NSString)
 
+        // Custom-property reads — present on EVERY handle (check included). The
+        // org bulk read is the authoritative query backbone; reading a repo's
+        // properties earns a property receipt that lets job.reportMatch accept a
+        // property-based match (authoritative data, not a stale search index).
+        let listOrgProperties: @convention(block) () -> JSValue = {
+            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let all = try await github.listOrgProperties(org: organisation)
+                let scoped = all.filter { !collector.isOutsideCanary($0.repo.fullName) }
+                collector.registerCandidates(scoped.map(\.repo))
+                for entry in scoped {
+                    collector.recordPropertyReceipt(repo: entry.repo.fullName, values: entry.properties)
+                }
+                collector.audit(kind: "gh.listOrgProperties", repo: nil,
+                                detail: "→ \(scoped.count) repo(s) with custom properties")
+                return scoped.map { entry -> [String: Any] in
+                    ["repo": entry.repo.scriptValue,
+                     "properties": entry.properties.mapValues { $0.scriptValue }]
+                }
+            }
+        }
+        gh.setObject(unsafeBitCast(listOrgProperties, to: AnyObject.self),
+                     forKeyedSubscript: "listOrgProperties" as NSString)
+
+        let getProperties: @convention(block) (JSValue?) -> JSValue = { repoValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("getProperties: repo (object or \"owner/name\") is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let props = try await github.getProperties(repo: fullName)
+                collector.recordPropertyReceipt(repo: fullName, values: props)
+                collector.audit(kind: "gh.getProperties", repo: fullName,
+                                detail: "→ \(props.count) propert\(props.count == 1 ? "y" : "ies")")
+                return props.mapValues { $0.scriptValue }
+            }
+        }
+        gh.setObject(unsafeBitCast(getProperties, to: AnyObject.self),
+                     forKeyedSubscript: "getProperties" as NSString)
+
+        let listPropertyDefs: @convention(block) () -> JSValue = {
+            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let defs = try await github.listPropertyDefs(org: organisation)
+                collector.cachePropertyDefs(defs)
+                collector.audit(kind: "gh.listPropertyDefs", repo: nil,
+                                detail: "→ \(defs.count) definition(s)")
+                return defs.map(\.scriptValue)
+            }
+        }
+        gh.setObject(unsafeBitCast(listPropertyDefs, to: AnyObject.self),
+                     forKeyedSubscript: "listPropertyDefs" as NSString)
+
         // Update phase write surface. The script-facing API is IDENTICAL in
         // both modes — the same reviewed script re-runs unchanged:
         // - dry run (default): writes are recorded as PlannedActions and
@@ -226,7 +276,8 @@ enum HostBindings {
                                        limiter: limiter, cancel: cancel, vmQueue: vmQueue,
                                        prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             case .armed:
-                installArmedWrites(on: gh, github: github, collector: collector,
+                installArmedWrites(on: gh, github: github, organisation: organisation,
+                                   collector: collector,
                                    limiter: limiter, cancel: cancel, vmQueue: vmQueue,
                                    prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             }
@@ -325,6 +376,43 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(createPR, to: AnyObject.self),
                      forKeyedSubscript: "createPR" as NSString)
+
+        // Custom-property write (dry-run): validate against the org schema at
+        // review time, then record the per-key before→after as a planned action.
+        let setProperties: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, valuesValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("setProperties: repo is required")
+            }
+            guard let desired = parsePropertyValues(valuesValue), !desired.isEmpty else {
+                return rejectedPromise("setProperties: a non-empty values object { name: value } is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                if collector.isOutsideCanary(fullName) {
+                    collector.recordAction(repo: fullName, .setProperties(values: desired, before: [:]))
+                    return nil
+                }
+                // Dry run is PURE RECORDING — it makes no host-initiated GitHub
+                // calls, exactly like the file-write recording handle. The only
+                // live reads during a dry run are the script's own (e.g.
+                // gh.getProperties for the diff). Allowed-values are validated
+                // here only when the script already fetched the schema
+                // (gh.listPropertyDefs, cached); otherwise the armed run enforces
+                // them before any write. Nothing here reaches GitHub.
+                if let defs = collector.cachedPropertyDefs(),
+                   let problem = validateValues(desired, against: defs) {
+                    collector.upsert(repo: collector.repo(named: fullName), status: .failed, reason: problem)
+                    collector.audit(kind: "plan.setProperties", repo: fullName, detail: "rejected: \(problem)")
+                    return nil
+                }
+                let before = subset(collector.fetchedPropertyValues(repo: fullName), keys: Array(desired.keys))
+                collector.recordAction(repo: fullName, .setProperties(values: desired, before: before))
+                collector.audit(kind: "plan.setProperties", repo: fullName,
+                                detail: "\(desired.count) propert\(desired.count == 1 ? "y" : "ies") (dry-run)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(setProperties, to: AnyObject.self),
+                     forKeyedSubscript: "setProperties" as NSString)
     }
 
     // MARK: - Armed writes (guarded live handle)
@@ -345,6 +433,7 @@ enum HostBindings {
     ///    with the same name the job did NOT create halts the repo.
     /// "What you reviewed is exactly what gets written, or nothing."
     private static func installArmedWrites(on gh: JSValue, github: GitHubClient,
+                                           organisation: String,
                                            collector: JobCollector,
                                            limiter: AsyncSemaphore, cancel: CancelBox,
                                            vmQueue: DispatchQueue,
@@ -545,6 +634,59 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(createPR, to: AnyObject.self),
                      forKeyedSubscript: "createPR" as NSString)
+
+        // Custom-property write (ARMED). A direct, terminal repo-metadata write
+        // (no branch/PR). Guarded by, in order: repo selection, halt state,
+        // plan conformance (same target values), allowed-values, idempotent
+        // resume (already at target → nothing written), and a drift guard (the
+        // values must still match what the dry run reviewed).
+        let setProperties: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, valuesValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("setProperties: repo is required")
+            }
+            guard let desired = parsePropertyValues(valuesValue), !desired.isEmpty else {
+                return rejectedPromise("setProperties: a non-empty values object { name: value } is required")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard case .setProperties(let expectedValues, let expectedBefore)? = collector.expectedNextAction(repo: fullName),
+                      expectedValues == desired else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script deviated from the reviewed plan (setProperties) — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: setProperties is not the next reviewed action for \(fullName)")
+                }
+                let defs = try await propertyDefs(collector: collector, github: github, organisation: organisation)
+                if let problem = validateValues(desired, against: defs) {
+                    collector.haltRepo(fullName, status: .failed, reason: problem)
+                    throw GitHubClientError.http(422, problem)
+                }
+                let keys = Array(desired.keys)
+                let current = subset(try await github.getProperties(repo: fullName), keys: keys)
+                if current == desired {
+                    // RESUME / idempotent: already at target — nothing to write.
+                    collector.consumeNextAction(repo: fullName)
+                    collector.upsert(repo: collector.repo(named: fullName), status: .alreadyUpToDate,
+                                     reason: "custom properties already at target — nothing written")
+                    collector.audit(kind: "write.setProperties", repo: fullName,
+                                    detail: "already at target — resumed, nothing written (ARMED)")
+                    return nil
+                }
+                guard current == subset(expectedBefore, keys: keys) else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "custom properties changed on the remote since the reviewed dry run — re-run the dry run and review again")
+                    throw GitHubClientError.http(409, "drift: custom properties for \(fullName) no longer match the reviewed dry run")
+                }
+                try await github.setProperties(repo: fullName, values: desired)
+                collector.consumeNextAction(repo: fullName)
+                collector.upsert(repo: collector.repo(named: fullName), status: .updated,
+                                 reason: "custom properties set: \(keys.sorted().joined(separator: ", "))")
+                collector.audit(kind: "write.setProperties", repo: fullName,
+                                detail: "\(desired.count) propert\(desired.count == 1 ? "y" : "ies") (ARMED)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(setProperties, to: AnyObject.self),
+                     forKeyedSubscript: "setProperties" as NSString)
     }
 
     // MARK: - Merge surface (registry-scoped)
@@ -821,9 +963,10 @@ enum HostBindings {
                     "reportMatch: evidence { path, excerpt } is required", in: ctx)
                 return
             }
-            guard collector.hasReceipt(repo: ref.fullName, path: path) else {
+            guard collector.hasReceipt(repo: ref.fullName, path: path)
+                    || collector.hasPropertyReceipt(repo: ref.fullName) else {
                 ctx.exception = JSValue(newErrorFromMessage:
-                    "reportMatch: no fetched content for \(ref.fullName) \(path) — call gh.getContent first; search results are candidates, not proof",
+                    "reportMatch: no authoritative read for \(ref.fullName) \(path) — call gh.getContent (for files) or gh.getProperties/gh.listOrgProperties (for custom properties) first; search results are candidates, not proof",
                     in: ctx)
                 return
             }
@@ -1078,6 +1221,71 @@ enum HostBindings {
     static func describe(_ value: JSValue?) -> String? {
         guard let value, !value.isUndefined, !value.isNull else { return nil }
         return value.toString()
+    }
+
+    // MARK: Custom-property helpers
+
+    /// Parses a JS values object `{ name: value }` into PropertyValues. A JS
+    /// string → `.string`, an array → `.list`, null → `.null` (clears it).
+    /// Returns nil when the argument is not an object.
+    static func parsePropertyValues(_ value: JSValue?) -> [String: PropertyValue]? {
+        guard let value, value.isObject, !value.isNull,
+              let dict = value.toObject() as? [String: Any] else { return nil }
+        var out: [String: PropertyValue] = [:]
+        for (key, raw) in dict { out[key] = propertyValue(fromAny: raw) }
+        return out
+    }
+
+    static func propertyValue(fromAny raw: Any) -> PropertyValue {
+        switch raw {
+        case let s as String: return .string(s)
+        case let a as [Any]: return .list(a.map { String(describing: $0) })
+        case is NSNull: return .null
+        default: return .string(String(describing: raw))
+        }
+    }
+
+    /// The values for exactly `keys`, with an absent key read as `.null` — so
+    /// "before"/"current"/"desired" maps compare on the same key set.
+    static func subset(_ map: [String: PropertyValue], keys: [String]) -> [String: PropertyValue] {
+        var out: [String: PropertyValue] = [:]
+        for key in keys { out[key] = map[key] ?? .null }
+        return out
+    }
+
+    /// Org property definitions, fetched once per run and reused.
+    static func propertyDefs(collector: JobCollector, github: GitHubClient,
+                             organisation: String) async throws -> [PropertyDef] {
+        if let cached = collector.cachedPropertyDefs() { return cached }
+        let defs = try await github.listPropertyDefs(org: organisation)
+        collector.cachePropertyDefs(defs)
+        return defs
+    }
+
+    /// Host-authoritative validation: the property must be defined (v1 sets
+    /// values only) and single/multi-select values must be in the allowed set.
+    /// Returns a human-readable problem, or nil when every value is valid.
+    static func validateValues(_ values: [String: PropertyValue],
+                               against defs: [PropertyDef]) -> String? {
+        for (name, value) in values {
+            guard let def = defs.first(where: { $0.name == name }) else {
+                return "custom property \"\(name)\" is not defined in the organisation — define it in org settings first (v1 sets values only)"
+            }
+            guard let allowed = def.allowedValues, !allowed.isEmpty else { continue }
+            switch value {
+            case .string(let s):
+                if !allowed.contains(s) {
+                    return "\"\(s)\" is not an allowed value for \"\(name)\" (allowed: \(allowed.joined(separator: ", ")))"
+                }
+            case .list(let arr):
+                if let bad = arr.first(where: { !allowed.contains($0) }) {
+                    return "\"\(bad)\" is not an allowed value for \"\(name)\" (allowed: \(allowed.joined(separator: ", ")))"
+                }
+            case .null:
+                continue
+            }
+        }
+        return nil
     }
 
     /// Accepts either "owner/name" or a Repo object from a prior gh call.

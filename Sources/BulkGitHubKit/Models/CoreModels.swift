@@ -27,6 +27,70 @@ public struct RepoRef: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+// MARK: - Repository custom properties
+
+/// One custom-property value. GitHub custom properties are name/value metadata
+/// defined at the organisation level; a value is free-text/single-select
+/// (`string`), multi-select (`list`), or unset (`null`). True/false properties
+/// arrive as the strings "true"/"false" and ride in `.string`.
+public enum PropertyValue: Codable, Hashable, Sendable {
+    case string(String)
+    case list([String])
+    case null
+
+    /// Shape exposed to scripts: a JS string, array of strings, or null.
+    public var scriptValue: Any {
+        switch self {
+        case .string(let s): return s
+        case .list(let a): return a
+        case .null: return NSNull()
+        }
+    }
+
+    /// Human-readable form for plan summaries and diffs.
+    public var displayString: String {
+        switch self {
+        case .string(let s): return s
+        case .list(let a): return "[" + a.joined(separator: ", ") + "]"
+        case .null: return "(unset)"
+        }
+    }
+}
+
+/// An organisation custom-property definition — the schema a value must satisfy.
+/// Used to validate writes (single/multi-select values outside `allowedValues`
+/// are rejected by GitHub) before they reach the API.
+public struct PropertyDef: Codable, Hashable, Sendable {
+    public var name: String
+    /// "string" | "single_select" | "multi_select" | "true_false".
+    public var valueType: String
+    /// Permitted values for single/multi-select properties; nil for free-text.
+    public var allowedValues: [String]?
+
+    public init(name: String, valueType: String, allowedValues: [String]? = nil) {
+        self.name = name
+        self.valueType = valueType
+        self.allowedValues = allowedValues
+    }
+
+    public var scriptValue: [String: Any] {
+        ["name": name, "valueType": valueType,
+         "allowedValues": allowedValues ?? NSNull()]
+    }
+}
+
+/// A repository paired with its custom-property values — the unit returned by
+/// the authoritative org-wide bulk read that powers property queries.
+public struct RepoProperties: Sendable {
+    public let repo: RepoRef
+    public let properties: [String: PropertyValue]
+
+    public init(repo: RepoRef, properties: [String: PropertyValue]) {
+        self.repo = repo
+        self.properties = properties
+    }
+}
+
 public struct PullRequestRef: Codable, Hashable, Sendable {
     public var repo: String
     public var number: Int
@@ -85,6 +149,10 @@ public enum RepoStatus: String, Codable, Sendable, CaseIterable {
     case approved
     case merged
     case cancelled
+    /// A direct repository-metadata write landed (e.g. a custom property set).
+    /// Unlike file changes there is no branch/PR/merge — the change is terminal
+    /// the moment it is written.
+    case updated
 
     /// Stable ordinal for sorting tables by status — declaration order tracks
     /// the funnel/lifecycle (candidate → match → planned → raised → merged).
@@ -291,6 +359,10 @@ public enum PlannedAction: Codable, Hashable, Sendable {
     case putContent(path: String, branch: String, message: String,
                     before: String?, after: String)
     case createPR(headRef: String, title: String, body: String)
+    /// Update phase: set/clear repository custom-property values. No branch or
+    /// PR — a direct, terminal repo-metadata write. `before` is the values for
+    /// exactly these keys at review time, for the diff and the armed drift guard.
+    case setProperties(values: [String: PropertyValue], before: [String: PropertyValue])
     // Merge phase: these operate only on the job's own artifacts.
     case mergePR(number: Int, expectedHeadSha: String)
     case closePR(number: Int)
@@ -305,6 +377,15 @@ public enum PlannedAction: Codable, Hashable, Sendable {
             return before == nil ? "Create \(path) on \(branch)" : "Update \(path) on \(branch)"
         case .createPR(let head, let title, _):
             return "Open PR \"\(title)\" from \(head)"
+        case .setProperties(let values, let before):
+            let parts = values.sorted { $0.key < $1.key }.map { key, value -> String in
+                if let old = before[key], old != value {
+                    return "\(key): \(old.displayString) → \(value.displayString)"
+                }
+                return "\(key) = \(value.displayString)"
+            }
+            let noun = values.count == 1 ? "property" : "properties"
+            return "Set custom \(noun) \(parts.joined(separator: ", "))"
         case .mergePR(let number, let sha):
             return "Squash-merge PR #\(number) at \(String(sha.prefix(12)))"
         case .closePR(let number):

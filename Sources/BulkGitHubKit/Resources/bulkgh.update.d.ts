@@ -45,4 +45,24 @@ interface GitHub {
     repo: Repo | string,
     opts: { head: string; title: string; body: string }
   ): Promise<PR>;
+
+  /**
+   * Set (or clear) repository custom-property VALUES. The property must already
+   * be defined at the org level — this sets values only, it does not create the
+   * definition. A null value clears a property. Single/multi-select values must
+   * be in the property's allowed set (validated at dry run).
+   *
+   * Unlike file edits there is NO branch or PR — this is a direct, terminal
+   * repo-metadata write that takes effect the moment it is armed.
+   *
+   * Fetch current values with gh.getProperties FIRST: it lets you skip repos
+   * already at the target (idempotency), gives the dry-run plan an accurate
+   * before→after diff, and makes the armed run's drift guard correct.
+   *
+   * Dry run: recorded as a planned action with the per-key diff.
+   */
+  setProperties(
+    repo: Repo | string,
+    values: Record<string, PropertyValue>
+  ): Promise<void>;
 }

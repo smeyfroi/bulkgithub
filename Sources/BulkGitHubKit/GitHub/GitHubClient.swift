@@ -46,6 +46,20 @@ public protocol GitHubClient: Sendable {
     func listPRs(repo: String, head: String?, state: String) async throws -> [PullRequestRef]
     func searchPRs(org: String, query: String) async throws -> [PullRequestRef]
 
+    // MARK: Custom properties (org-owned repos)
+
+    /// Authoritative bulk read of every org repo with its custom-property
+    /// values — the backbone for property queries (no search-index staleness).
+    func listOrgProperties(org: String) async throws -> [RepoProperties]
+    /// One repository's custom-property values (authoritative, per-repo).
+    func getProperties(repo: String) async throws -> [String: PropertyValue]
+    /// The organisation's custom-property definitions (schema + allowed values).
+    func listPropertyDefs(org: String) async throws -> [PropertyDef]
+    /// Set/clear custom-property values on one repo (values-only — the property
+    /// must already be defined at the org level). A `.null` value clears it.
+    /// Reached only through the engine's armed bindings.
+    func setProperties(repo: String, values: [String: PropertyValue]) async throws
+
     // MARK: Writes (update phase) — reached only through the engine's armed
     // bindings, which enforce repo selection, plan conformance, the drift
     // guard, and the bulkgh/ branch prefix before any of these is called.

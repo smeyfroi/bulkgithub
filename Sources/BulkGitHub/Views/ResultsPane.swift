@@ -97,9 +97,9 @@ struct ResultsPane: View {
         @Bindable var model = model
         if model.mergeRows.isEmpty {
             ContentUnavailableView(
-                "No job pull requests",
-                systemImage: "arrow.triangle.pull",
-                description: Text("Apply an update plan first — the PRs it creates appear here for approval and completion.")
+                "Nothing to complete",
+                systemImage: "checkmark.seal",
+                description: Text("This step finalizes the pull requests an update creates — they appear here for approval and merge. A job that opens no PRs has nothing to complete: metadata updates such as custom properties apply directly at the Update step, so they're already done.")
             )
         } else {
             let approvedCount = model.mergeRows.filter(\.approved).count
@@ -429,7 +429,7 @@ struct StatusBadge: View {
 
     private var color: Color {
         switch status {
-        case .verifiedMatch, .merged, .approved: return .green
+        case .verifiedMatch, .merged, .approved, .updated: return .green
         case .candidate: return .blue
         case .skipped, .alreadyUpToDate: return .orange
         case .failed, .blocked, .conflicted: return .red

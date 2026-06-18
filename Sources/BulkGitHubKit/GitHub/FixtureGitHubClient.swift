@@ -16,8 +16,18 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
     public var unmergeablePRs: Set<Int> = []
     /// Artificial latency per call, for cancellation tests and UI realism.
     public var delay: Duration
+    /// The org's custom-property definitions (schema + allowed values).
+    public var propertyDefs: [PropertyDef]
 
     private let lock = NSLock()
+    /// fullName -> property name -> value, mutated by setProperties under lock.
+    private var _customProperties: [String: [String: PropertyValue]]
+
+    /// Custom-property values as currently stored (test inspection).
+    public func properties(of repo: String) -> [String: PropertyValue] {
+        lock.lock(); defer { lock.unlock() }
+        return _customProperties[repo] ?? [:]
+    }
     private var _callLog: [String] = []
     public var callLog: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -56,11 +66,15 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
                 contents: [String: [String: String]] = [:],
                 searchResults: [RepoRef] = [],
                 errorInjections: [String: String] = [:],
+                customProperties: [String: [String: PropertyValue]] = [:],
+                propertyDefs: [PropertyDef] = [],
                 delay: Duration = .zero) {
         self.repos = repos
         self.contents = contents
         self.searchResults = searchResults
         self.errorInjections = errorInjections
+        self._customProperties = customProperties
+        self.propertyDefs = propertyDefs
         self.delay = delay
     }
 
@@ -308,6 +322,47 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         try await pause()
         return []
     }
+
+    // MARK: Custom properties
+
+    public func listOrgProperties(org: String) async throws -> [RepoProperties] {
+        record("listOrgProperties(\(org))")
+        try await pause()
+        return repos.map { RepoProperties(repo: $0, properties: properties(of: $0.fullName)) }
+    }
+
+    public func getProperties(repo: String) async throws -> [String: PropertyValue] {
+        record("getProperties(\(repo))")
+        try await pause()
+        guard repos.contains(where: { $0.fullName == repo }) else {
+            throw GitHubClientError.notFound("repository \(repo)")
+        }
+        return properties(of: repo)
+    }
+
+    public func listPropertyDefs(org: String) async throws -> [PropertyDef] {
+        record("listPropertyDefs(\(org))")
+        try await pause()
+        return propertyDefs
+    }
+
+    public func setProperties(repo: String, values: [String: PropertyValue]) async throws {
+        record("setProperties(\(repo))")
+        try await pause()
+        guard repos.contains(where: { $0.fullName == repo }) else {
+            throw GitHubClientError.notFound("repository \(repo)")
+        }
+        doSetProperties(repo: repo, values: values)
+    }
+
+    private func doSetProperties(repo: String, values: [String: PropertyValue]) {
+        lock.lock(); defer { lock.unlock() }
+        var current = _customProperties[repo] ?? [:]
+        for (name, value) in values {
+            if case .null = value { current.removeValue(forKey: name) } else { current[name] = value }
+        }
+        _customProperties[repo] = current
+    }
 }
 
 extension FixtureGitHubClient {
@@ -473,7 +528,21 @@ extension FixtureGitHubClient {
                 docs.fullName: ["README.md": "# Docs\n"],
             ],
             searchResults: [api, web, pipeline, legacy, infra, flaky],
-            errorInjections: [flaky.fullName: "connection reset by peer"]
+            errorInjections: [flaky.fullName: "connection reset by peer"],
+            // Custom properties (org-owned repos): ProjectType is a single-select
+            // restricted to known stacks. api/pipeline are already tagged rails
+            // (so a query for rails matches them, and a "set from project.json"
+            // run finds them already up to date); web-frontend is left unset so
+            // that same run has a real change to plan (its project.json → react).
+            customProperties: [
+                api.fullName: ["ProjectType": .string("rails")],
+                pipeline.fullName: ["ProjectType": .string("rails")],
+            ],
+            propertyDefs: [
+                PropertyDef(name: "ProjectType", valueType: "single_select",
+                            allowedValues: ["rails", "react", "go", "python"]),
+                PropertyDef(name: "Tier", valueType: "string", allowedValues: nil),
+            ]
         )
     }
 }

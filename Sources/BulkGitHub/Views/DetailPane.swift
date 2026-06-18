@@ -253,6 +253,7 @@ struct PlannedActionView: View {
         case .createBranch: return "arrow.triangle.branch"
         case .putContent: return "pencil.line"
         case .createPR: return "arrow.triangle.pull"
+        case .setProperties: return "tag"
         case .mergePR: return "arrow.triangle.merge"
         case .closePR: return "xmark.circle"
         case .editPR: return "pencil"

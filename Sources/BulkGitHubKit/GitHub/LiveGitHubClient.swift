@@ -414,6 +414,124 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         }
     }
 
+    // MARK: Custom properties
+
+    /// Decodes a GitHub custom-property `value` (string, array of strings, or
+    /// null/absent) into a PropertyValue.
+    static func propertyValue(from raw: Any?) -> PropertyValue {
+        switch raw {
+        case let s as String: return .string(s)
+        case let a as [Any]: return .list(a.map { String(describing: $0) })
+        case is NSNull, .none: return .null
+        default: return .string(String(describing: raw!))
+        }
+    }
+
+    /// Encodes a PropertyValue for a PATCH body (string, array, or NSNull).
+    static func propertyJSON(_ value: PropertyValue) -> Any {
+        switch value {
+        case .string(let s): return s
+        case .list(let a): return a
+        case .null: return NSNull()
+        }
+    }
+
+    private static func properties(from items: [[String: Any]]) -> [String: PropertyValue] {
+        var out: [String: PropertyValue] = [:]
+        for item in items {
+            guard let name = item["property_name"] as? String else { continue }
+            out[name] = propertyValue(from: item["value"])
+        }
+        return out
+    }
+
+    /// Custom-property permissions are fine-grained-token only (no classic-PAT
+    /// scope), split by operation, and require the org as the token's resource
+    /// owner. Turn the opaque 403 into one legible, actionable message naming
+    /// the exact permission to grant.
+    private static func clarifyPropertyPermission(_ error: Error, writing: Bool) -> Error {
+        guard case GitHubClientError.http(403, _) = error else { return error }
+        let needed = writing
+            ? "\"Repository → Custom properties: write\""
+            : "\"Organization → Custom properties: read\""
+        return GitHubClientError.http(403,
+            "the token lacks the required custom-properties permission (\(needed)). "
+            + "Use a fine-grained token whose resource owner is the organisation — classic PATs "
+            + "and personal-account tokens do not expose this permission.")
+    }
+
+    public func listOrgProperties(org: String) async throws -> [RepoProperties] {
+        do {
+            let items = try await fetchPaginatedArray(path: "orgs/\(org)/properties/values", query: [])
+            return items.compactMap { item in
+                guard let fullName = item["repository_full_name"] as? String else { return nil }
+                let repo = RepoRef(fullName: fullName, name: item["repository_name"] as? String)
+                let props = Self.properties(from: item["properties"] as? [[String: Any]] ?? [])
+                return RepoProperties(repo: repo, properties: props)
+            }
+        } catch {
+            throw Self.clarifyPropertyPermission(error, writing: false)
+        }
+    }
+
+    public func getProperties(repo: String) async throws -> [String: PropertyValue] {
+        do {
+            let json = try await fetchJSON(try request(path: "repos/\(repo)/properties/values"))
+            guard let items = json as? [[String: Any]] else {
+                throw GitHubClientError.invalidResponse("properties API returned unexpected shape for \(repo)")
+            }
+            return Self.properties(from: items)
+        } catch {
+            throw Self.clarifyPropertyPermission(error, writing: false)
+        }
+    }
+
+    public func listPropertyDefs(org: String) async throws -> [PropertyDef] {
+        do {
+            let json = try await fetchJSON(try request(path: "orgs/\(org)/properties/schema"))
+            guard let items = json as? [[String: Any]] else {
+                throw GitHubClientError.invalidResponse("properties schema API returned unexpected shape")
+            }
+            return items.compactMap { item in
+                guard let name = item["property_name"] as? String else { return nil }
+                return PropertyDef(name: name,
+                                   valueType: item["value_type"] as? String ?? "string",
+                                   allowedValues: item["allowed_values"] as? [String])
+            }
+        } catch {
+            throw Self.clarifyPropertyPermission(error, writing: false)
+        }
+    }
+
+    public func setProperties(repo: String, values: [String: PropertyValue]) async throws {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        let body: [String: Any] = ["properties": values.map { name, value in
+            ["property_name": name, "value": Self.propertyJSON(value)]
+        }]
+        do {
+            try await withVoidWriteRetry(
+                label: "set properties on \(repo)",
+                landed: {
+                    // Already at target? Then the PATCH landed (it is idempotent
+                    // anyway; this just avoids a redundant write on retry).
+                    let current = try await self.getProperties(repo: repo)
+                    return values.allSatisfy { (current[$0.key] ?? .null) == $0.value }
+                },
+                perform: {
+                    // The values endpoint returns 204 No Content — bypass the
+                    // JSON decode (an empty body would fail JSONSerialization).
+                    let (data, http) = try await self.fetch(try self.mutatingRequest(
+                        method: "PATCH", path: "repos/\(repo)/properties/values", body: body))
+                    guard (200..<300).contains(http.statusCode) else {
+                        let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+                        throw GitHubClientError.http(http.statusCode, detail)
+                    }
+                })
+        } catch {
+            throw Self.clarifyPropertyPermission(error, writing: true)
+        }
+    }
+
     // MARK: Writes (hard-disabled via liveWritesEnabled)
 
     /// Mutating request with a JSON body. Every caller checks the kill

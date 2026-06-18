@@ -143,6 +143,44 @@ public final class JobCollector: @unchecked Sendable {
         return fetchedContents["\(repo)|\(path)"]
     }
 
+    // MARK: Custom-property receipts
+
+    /// Repos whose custom-property values the script has actually read this run,
+    /// with the values it saw. Reading properties is an AUTHORITATIVE fetch (no
+    /// search-index staleness), so it earns the same evidence standing as a
+    /// content receipt: it lets job.reportMatch accept a property-based match,
+    /// and supplies the "before" side of a planned property write's diff.
+    private var fetchedProperties: [String: [String: PropertyValue]] = [:]
+
+    public func recordPropertyReceipt(repo: String, values: [String: PropertyValue]) {
+        lock.lock(); defer { lock.unlock() }
+        fetchedProperties[repo] = values
+    }
+
+    public func hasPropertyReceipt(repo: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return fetchedProperties[repo] != nil
+    }
+
+    public func fetchedPropertyValues(repo: String) -> [String: PropertyValue] {
+        lock.lock(); defer { lock.unlock() }
+        return fetchedProperties[repo] ?? [:]
+    }
+
+    /// Org property definitions, fetched once per run and reused — both the
+    /// dry-run and armed property-write paths validate against them.
+    private var propertyDefsCache: [PropertyDef]?
+
+    public func cachedPropertyDefs() -> [PropertyDef]? {
+        lock.lock(); defer { lock.unlock() }
+        return propertyDefsCache
+    }
+
+    public func cachePropertyDefs(_ defs: [PropertyDef]) {
+        lock.lock(); defer { lock.unlock() }
+        propertyDefsCache = defs
+    }
+
     // MARK: Execution plan (recording handle, update dry runs)
 
     /// True when canary targeting excludes this repo from the plan.

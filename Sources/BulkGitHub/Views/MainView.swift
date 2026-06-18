@@ -125,7 +125,8 @@ struct MainView: View {
                         .help(buttonHelp)
                         // Generation streams into the editor, so running
                         // mid-generation would execute a truncated script.
-                        .disabled(model.scriptText.isEmpty || model.validating || model.generating
+                        .disabled(completeNotApplicable
+                                  || model.scriptText.isEmpty || model.validating || model.generating
                                   || (model.writeArmed && !model.canArmWrites)
                                   || (model.writeArmed && model.armTargets.isEmpty)
                                   || !model.prFieldsComplete)
@@ -195,12 +196,23 @@ struct MainView: View {
         )
     }
 
+    /// The Complete step finalizes the PRs an Update created. A job that opened
+    /// none — e.g. a metadata-only update like custom properties, which applies
+    /// directly at Update — has nothing to complete.
+    private var completeNotApplicable: Bool {
+        model.phase == .merge && model.mergeRows.isEmpty
+    }
+
     private var buttonTitle: String {
+        if completeNotApplicable { return "Nothing to Complete" }
         if model.writeArmed { return "Apply…" }
         return model.phase == .check ? "Run" : "Dry Run"
     }
 
     private var buttonHelp: String {
+        if completeNotApplicable {
+            return "This job created no pull requests to complete — metadata updates such as custom properties apply directly at the Update step."
+        }
         if model.writeArmed {
             return "Apply the reviewed plan: choose repositories and confirm — this writes"
         }
