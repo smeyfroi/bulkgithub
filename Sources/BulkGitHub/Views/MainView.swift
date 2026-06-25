@@ -342,15 +342,23 @@ struct PhaseFlowControl: View {
                     .font(.subheadline)
                 Text(label)
                     .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                if badge > 0 {
-                    Text("\(badge)")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 0.5)
-                        .background((isCurrent ? tint : Color.secondary).opacity(0.16),
-                                    in: Capsule())
-                        .foregroundStyle(isCurrent ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
-                }
+                    // Refuse truncation: the principal toolbar slot can hand the
+                    // label a narrow proposal once the count badge claims width,
+                    // clipping it to "Find 2…". Pin the label to its full width.
+                    .fixedSize(horizontal: true, vertical: false)
+                // Render the badge slot unconditionally and just hide the count
+                // until it exists — the pill is then sized for "label + count"
+                // from the start, so room for the suffix is reserved before the
+                // operation completes and the geometry doesn't jump when it does.
+                Text("\(badge)")
+                    .font(.caption2.weight(.semibold))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 0.5)
+                    .background((isCurrent ? tint : Color.secondary).opacity(0.16),
+                                in: Capsule())
+                    .foregroundStyle(isCurrent ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
+                    .opacity(badge > 0 ? 1 : 0)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 3)
