@@ -15,8 +15,10 @@
  *   only branches the app will ever create or delete.
  * - Fetch a file with gh.getContent before gh.putContent so the plan can
  *   show a before/after diff.
- * - One branch per repo, then one putContent per changed file, then a single
- *   createPR.
+ * - To remove a file, use gh.deleteContent (also "bulkgh/"-only); fetch it
+ *   first so the plan can show what is being deleted.
+ * - One branch per repo, then one putContent/deleteContent per changed file,
+ *   then a single createPR.
  */
 
 interface GitHub {
@@ -35,6 +37,18 @@ interface GitHub {
     path: string,
     content: string,
     opts: { branch: string; message: string; expectedSha?: string }
+  ): Promise<void>;
+
+  /**
+   * Delete one file from a "bulkgh/"-prefixed branch.
+   * Fetch it with gh.getContent first so the dry run can show what is being
+   * removed. Deleting a file that is already absent is a no-op.
+   * Dry run: recorded with the deletion shown as a diff for review.
+   */
+  deleteContent(
+    repo: Repo | string,
+    path: string,
+    opts: { branch: string; message: string }
   ): Promise<void>;
 
   /**

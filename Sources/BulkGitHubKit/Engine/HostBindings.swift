@@ -348,6 +348,33 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(putContent, to: AnyObject.self),
                      forKeyedSubscript: "putContent" as NSString)
 
+        let deleteContent: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, pathValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("deleteContent: repo is required")
+            }
+            guard let path = stringArg(pathValue) else {
+                return rejectedPromise("deleteContent: path is required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let branch = stringArg(opts.objectForKeyedSubscript("branch")),
+                  let message = stringArg(opts.objectForKeyedSubscript("message")) else {
+                return rejectedPromise("deleteContent: opts { branch, message } are required")
+            }
+            guard branch.hasPrefix("bulkgh/") else {
+                return rejectedPromise("deleteContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let before = collector.fetchedContent(repo: fullName, path: path)
+                collector.recordAction(repo: fullName, .deleteFile(path: path, branch: branch,
+                                                                   message: message, before: before))
+                collector.audit(kind: "plan.deleteContent", repo: fullName,
+                                detail: "\(path) on \(branch) (dry-run)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(deleteContent, to: AnyObject.self),
+                     forKeyedSubscript: "deleteContent" as NSString)
+
         let createPR: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, optsValue in
             guard let fullName = repoName(repoValue) else {
                 return rejectedPromise("createPR: repo is required")
@@ -554,6 +581,57 @@ enum HostBindings {
         }
         gh.setObject(unsafeBitCast(putContent, to: AnyObject.self),
                      forKeyedSubscript: "putContent" as NSString)
+
+        let deleteContent: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, pathValue, optsValue in
+            guard let fullName = repoName(repoValue) else {
+                return rejectedPromise("deleteContent: repo is required")
+            }
+            guard let path = stringArg(pathValue) else {
+                return rejectedPromise("deleteContent: path is required")
+            }
+            guard let opts = optsValue, opts.isObject,
+                  let branch = stringArg(opts.objectForKeyedSubscript("branch")),
+                  let message = stringArg(opts.objectForKeyedSubscript("message")) else {
+                return rejectedPromise("deleteContent: opts { branch, message } are required")
+            }
+            guard branch.hasPrefix("bulkgh/") else {
+                return rejectedPromise("deleteContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
+            }
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                try preflight(fullName)
+                guard case .deleteFile(let expectedPath, let expectedBranch, _, let expectedBefore)?
+                        = collector.expectedNextAction(repo: fullName),
+                      expectedPath == path, expectedBranch == branch else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "script deviated from the reviewed plan (deleteContent \(path)) — nothing written")
+                    throw GitHubClientError.http(409, "plan deviation: deleteContent \(path) is not the next reviewed action for \(fullName)")
+                }
+                // RESUME: an earlier armed run already removed this file from the
+                // job branch — skip, don't re-delete.
+                if (try? await github.getContent(repo: fullName, path: path, ref: branch)) == .some(nil) {
+                    collector.consumeNextAction(repo: fullName)
+                    collector.audit(kind: "write.deleteContent", repo: fullName,
+                                    detail: "\(path) already absent on \(branch) — resumed, nothing written")
+                    return nil
+                }
+                // Drift guard: the file must still match what the review saw on
+                // the default branch — if it changed (or vanished), re-review.
+                let current = try await github.getContent(repo: fullName, path: path, ref: nil)
+                guard current == expectedBefore else {
+                    collector.haltRepo(fullName, status: .conflicted,
+                                       reason: "\(path) changed on the remote since the reviewed dry run — re-run the dry run and review again")
+                    throw GitHubClientError.http(409, "drift: \(path) in \(fullName) no longer matches the reviewed dry run")
+                }
+                let commit = try await github.deleteContent(repo: fullName, path: path,
+                                                            branch: branch, message: message)
+                collector.consumeNextAction(repo: fullName)
+                collector.audit(kind: "write.deleteContent", repo: fullName,
+                                detail: "\(path) on \(branch) → \(String(commit.prefix(12))) (ARMED)")
+                return nil
+            }
+        }
+        gh.setObject(unsafeBitCast(deleteContent, to: AnyObject.self),
+                     forKeyedSubscript: "deleteContent" as NSString)
 
         let createPR: @convention(block) (JSValue?, JSValue?) -> JSValue = { repoValue, optsValue in
             guard let fullName = repoName(repoValue) else {

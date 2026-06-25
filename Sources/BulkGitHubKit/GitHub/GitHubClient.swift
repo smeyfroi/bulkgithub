@@ -69,6 +69,9 @@ public protocol GitHubClient: Sendable {
     /// Create or update a file on a branch; returns the commit SHA.
     func putContent(repo: String, path: String, content: String,
                     branch: String, message: String) async throws -> String
+    /// Delete a file from a branch; returns the commit SHA.
+    func deleteContent(repo: String, path: String,
+                       branch: String, message: String) async throws -> String
     /// Open a pull request from head into base.
     func createPR(repo: String, head: String, base: String,
                   title: String, body: String) async throws -> PullRequestRef

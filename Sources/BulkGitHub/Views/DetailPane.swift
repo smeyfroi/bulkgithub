@@ -146,8 +146,10 @@ struct AppliedChangesView: View {
 
     private var edits: [PlannedAction] {
         actions.filter {
-            if case .putContent = $0 { return true }
-            return false
+            switch $0 {
+            case .putContent, .deleteFile: return true
+            default: return false
+            }
         }
     }
 
@@ -220,6 +222,10 @@ struct PlannedActionView: View {
             switch action {
             case .putContent(_, _, _, let before, let after):
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
+            case .deleteFile(_, _, _, let before):
+                // A deletion is the file's content going to nothing — every
+                // line shows as removed.
+                DiffView(lines: DiffBuilder.lines(before: before ?? "", after: ""))
             case .createPR(_, _, let body) where !body.isEmpty:
                 // The PR description this action will open, shown verbatim so
                 // the review pane is faithful to exactly what gets posted —
@@ -252,6 +258,7 @@ struct PlannedActionView: View {
         switch action {
         case .createBranch: return "arrow.triangle.branch"
         case .putContent: return "pencil.line"
+        case .deleteFile: return "trash"
         case .createPR: return "arrow.triangle.pull"
         case .setProperties: return "tag"
         case .mergePR: return "arrow.triangle.merge"

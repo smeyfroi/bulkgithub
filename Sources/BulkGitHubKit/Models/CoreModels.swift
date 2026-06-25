@@ -358,6 +358,10 @@ public enum PlannedAction: Codable, Hashable, Sendable {
     case createBranch(name: String, fromSha: String)
     case putContent(path: String, branch: String, message: String,
                     before: String?, after: String)
+    /// Update phase: remove a file from a "bulkgh/" branch. `before` is the
+    /// file's content at review time — for the deletion diff and the armed
+    /// drift guard. nil before means the file was already absent at review.
+    case deleteFile(path: String, branch: String, message: String, before: String?)
     case createPR(headRef: String, title: String, body: String)
     /// Update phase: set/clear repository custom-property values. No branch or
     /// PR — a direct, terminal repo-metadata write. `before` is the values for
@@ -375,6 +379,8 @@ public enum PlannedAction: Codable, Hashable, Sendable {
             return "Create branch \(name) from \(String(sha.prefix(12)))"
         case .putContent(let path, let branch, _, let before, _):
             return before == nil ? "Create \(path) on \(branch)" : "Update \(path) on \(branch)"
+        case .deleteFile(let path, let branch, _, _):
+            return "Delete \(path) on \(branch)"
         case .createPR(let head, let title, _):
             return "Open PR \"\(title)\" from \(head)"
         case .setProperties(let values, let before):

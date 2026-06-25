@@ -216,6 +216,20 @@ public final class FixtureGitHubClient: GitHubClient, @unchecked Sendable {
         return commit
     }
 
+    public func deleteContent(repo: String, path: String,
+                              branch: String, message: String) async throws -> String {
+        record("deleteContent(\(repo), \(path), \(branch))")
+        try await pause()
+        lock.lock(); defer { lock.unlock() }
+        guard _branchContents["\(repo)|\(branch)"] != nil else {
+            throw GitHubClientError.notFound("branch \(branch) in \(repo)")
+        }
+        _branchContents["\(repo)|\(branch)"]?.removeValue(forKey: path)
+        let commit = Self.fakeSha("\(repo)#\(branch)#\(path)#deleted")
+        _branches[repo]?[branch] = commit
+        return commit
+    }
+
     public func createPR(repo: String, head: String, base: String,
                          title: String, body: String) async throws -> PullRequestRef {
         record("createPR(\(repo), \(head))")

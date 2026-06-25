@@ -353,6 +353,87 @@ struct ArmedRunTests {
         #expect(message2.contains("plan"))
     }
 
+    /// An inline update script that removes one file via gh.deleteContent —
+    /// exercises the recording surface (plans a .deleteFile with the file's
+    /// content as `before`) and the armed surface (the file actually leaves
+    /// the job branch).
+    private static let deleteFileScript = """
+    const meta: ScriptMeta = {
+      title: "Delete a file (dry-run update)",
+      phase: "update",
+      apiVersion: 1,
+      params: {
+        branch: "bulkgh/remove-readme",
+        message: "Remove README",
+        prTitle: "Remove README",
+        prBody: "Deletes README.",
+      },
+    };
+
+    async function main(): Promise<void> {
+      const { branch, message, prTitle, prBody } = job.params;
+      const repoName = "example-org/web-frontend";
+      const path = "README.md";
+      const text = await gh.getContent(repoName, path);
+      if (text === null) { job.skip(repoName, "already gone"); return; }
+      const ref = await gh.getRef(repoName, "heads/main");
+      if (ref === null) { job.error(repoName, "no ref"); return; }
+      await gh.createBranch(repoName, branch, ref.sha);
+      await gh.deleteContent(repoName, path, { branch, message });
+      await gh.createPR(repoName, { head: branch, title: prTitle, body: prBody });
+      job.log(`${repoName}: planned delete`);
+    }
+    """
+
+    @Test("deleteContent: dry run plans a .deleteFile, armed apply removes it from the branch")
+    func deleteFileDryRunThenArmed() async throws {
+        let client = FixtureGitHubClient.demo()
+        let pipeline = ValidationPipeline(typescript: TypeScriptService.loadDefault())
+        let validated = try pipeline.validate(source: Self.deleteFileScript)
+        #expect(validated.meta.phase == .update)
+
+        // Dry run: the deletion is recorded with the file's content as `before`.
+        let dryRun = await ScriptEngine().run(javaScript: validated.javaScript,
+                                              phase: .update,
+                                              params: validated.meta.params,
+                                              github: client,
+                                              organisation: "example-org",
+                                              onEvent: { _ in })
+        #expect(dryRun.status == .completed)
+        #expect(dryRun.artifacts.isEmpty)  // nothing reached the fixture
+        let plan = dryRun.plannedActions
+        let webActions = try #require(plan["example-org/web-frontend"])
+        guard case .deleteFile(let path, let branch, _, let before) = webActions[1] else {
+            Issue.record("expected deleteFile as the second planned action"); return
+        }
+        #expect(path == "README.md")
+        #expect(branch == "bulkgh/remove-readme")
+        #expect(before?.contains("web-frontend") == true)  // the doomed content, for the diff
+        #expect(webActions[1].summary == "Delete README.md on bulkgh/remove-readme")
+        // The file is untouched on the real default branch after the dry run.
+        let stillThere = try await client.getContent(repo: "example-org/web-frontend",
+                                                     path: "README.md", ref: nil)
+        #expect(stillThere != nil)
+
+        // Armed apply: the file leaves the job branch and a PR is raised.
+        let armed = await ScriptEngine().run(javaScript: validated.javaScript,
+                                             phase: .update,
+                                             params: validated.meta.params,
+                                             github: client,
+                                             organisation: "example-org",
+                                             configuration: armedConfiguration(
+                                                targets: ["example-org/web-frontend"],
+                                                plan: plan),
+                                             onEvent: { _ in })
+        #expect(armed.status == .completed)
+        #expect(armed.results.first { $0.id == "example-org/web-frontend" }?.status == .prRaised)
+        #expect(client.branchContent(repo: "example-org/web-frontend",
+                                     branch: "bulkgh/remove-readme", path: "README.md") == nil)
+        let writes = armed.auditEvents.filter { $0.kind == "write.deleteContent" }
+        #expect(writes.count == 1)
+        #expect(writes.allSatisfy { $0.detail.contains("ARMED") })
+    }
+
     @Test("live writes fail closed without credentials — no request leaves the box")
     func liveWritesRequireCredentials() async {
         // The kill switch is now open (0.4.0) — writes are guarded by the
@@ -369,6 +450,10 @@ struct ArmedRunTests {
         await #expect(throws: GitHubClientError.missingCredentials) {
             _ = try await client.putContent(repo: "example-org/x", path: "f", content: "c",
                                             branch: "bulkgh/t", message: "m")
+        }
+        await #expect(throws: GitHubClientError.missingCredentials) {
+            _ = try await client.deleteContent(repo: "example-org/x", path: "f",
+                                               branch: "bulkgh/t", message: "m")
         }
         await #expect(throws: GitHubClientError.missingCredentials) {
             _ = try await client.createPR(repo: "example-org/x", head: "bulkgh/t", base: "main",

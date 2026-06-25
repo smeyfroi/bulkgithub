@@ -602,6 +602,44 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
             })
     }
 
+    public func deleteContent(repo: String, path: String,
+                              branch: String, message: String) async throws -> String {
+        guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
+        return try await withWriteRetry(
+            verify: {
+                // If the file is already gone from the branch the DELETE landed
+                // (or a prior armed run already removed it). The commit sha is
+                // only used for audit detail, so a marker suffices.
+                let current = try await self.getContent(repo: repo, path: path, ref: branch)
+                return current == nil ? "(already-deleted)" : nil
+            },
+            perform: {
+                // The contents API needs the existing blob sha to delete. If the
+                // file isn't there, treat the delete as already satisfied — the
+                // verify marker above also covers the in-flight retry case.
+                let existing = try await self.fetchJSON(
+                    try self.request(path: "repos/\(repo)/contents/\(path)",
+                                     query: [URLQueryItem(name: "ref", value: branch)]),
+                    allow404: true)
+                guard let dict = existing as? [String: Any], let sha = dict["sha"] as? String else {
+                    return "(already-deleted)"
+                }
+                let body: [String: Any] = [
+                    "message": message,
+                    "sha": sha,
+                    "branch": branch,
+                ]
+                let json = try await self.fetchJSON(try self.mutatingRequest(
+                    method: "DELETE", path: "repos/\(repo)/contents/\(path)", body: body))
+                guard let dict = json as? [String: Any],
+                      let commit = dict["commit"] as? [String: Any],
+                      let commitSha = commit["sha"] as? String else {
+                    throw GitHubClientError.invalidResponse("contents API returned unexpected shape deleting \(path)")
+                }
+                return commitSha
+            })
+    }
+
     public func createPR(repo: String, head: String, base: String,
                          title: String, body: String) async throws -> PullRequestRef {
         guard Self.liveWritesEnabled else { throw GitHubClientError.writesDisabled }
