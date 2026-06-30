@@ -102,7 +102,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         switch error {
         case .network:
             return backoffDelay(attempt: attempt)
-        case .rateLimited(let retryAfter):
+        case .rateLimited(let retryAfter, _):
             if let retryAfter { return retryAfter <= Self.rateLimitWaitCap ? retryAfter : nil }
             return min(backoffDelay(attempt: attempt), Self.rateLimitWaitCap)
         default:
@@ -222,7 +222,9 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
             let remaining = http.value(forHTTPHeaderField: "x-ratelimit-remaining")
             if remaining == "0" || http.statusCode == 429 {
                 let retry = http.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
-                throw GitHubClientError.rateLimited(retryAfter: retry)
+                let resetAt = http.value(forHTTPHeaderField: "x-ratelimit-reset")
+                    .flatMap(Double.init).map { Date(timeIntervalSince1970: $0) }
+                throw GitHubClientError.rateLimited(retryAfter: retry, resetAt: resetAt)
             }
         }
         return (data, http)

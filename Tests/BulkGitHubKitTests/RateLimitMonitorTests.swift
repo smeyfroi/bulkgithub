@@ -83,4 +83,27 @@ struct RateLimitMonitorTests {
         #expect(monitor.snapshot.limit == 5000)
         #expect(monitor.display == "API 4900/5000")
     }
+
+    @Test("reset countdown reports the time until the displayed pool's window rolls over")
+    func resetCountdown() {
+        let monitor = monitor()
+        // Exhausted core pool whose window resets an hour out.
+        monitor.update(from: response(remaining: 0, reset: futureReset))
+        #expect(monitor.isLow)
+        #expect(monitor.resetDisplay == "resets in 60 min")
+    }
+
+    @Test("reset countdown drops to seconds under a minute out")
+    func resetCountdownSeconds() {
+        let monitor = monitor()
+        monitor.update(from: response(remaining: 0, reset: nowDate.timeIntervalSince1970 + 30))
+        #expect(monitor.resetDisplay == "resets in 30s")
+    }
+
+    @Test("no reset countdown once the window has already passed")
+    func resetCountdownPastWindow() {
+        let monitor = monitor()
+        monitor.update(from: response(remaining: 0, reset: pastReset))
+        #expect(monitor.resetDisplay == nil)
+    }
 }
