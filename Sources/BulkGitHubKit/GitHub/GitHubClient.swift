@@ -3,7 +3,11 @@ import Foundation
 public enum GitHubClientError: Error, LocalizedError, Equatable {
     case notFound(String)
     case http(Int, String)
-    case rateLimited(retryAfter: Double?)
+    /// `resetAt` is the X-RateLimit-Reset header as a wall-clock time — when the
+    /// exhausted pool's window rolls over. GitHub omits Retry-After for the
+    /// primary hourly limit, so this is usually the only signal of when quota
+    /// returns, and it can be up to an hour out.
+    case rateLimited(retryAfter: Double?, resetAt: Date?)
     case network(String)
     case missingCredentials
     case invalidResponse(String)
@@ -15,14 +19,27 @@ public enum GitHubClientError: Error, LocalizedError, Equatable {
         switch self {
         case .notFound(let what): return "Not found: \(what)"
         case .http(let code, let message): return "HTTP \(code): \(message)"
-        case .rateLimited(let after):
-            return "Rate limited" + (after.map { ", retry after \(Int($0))s" } ?? "")
+        case .rateLimited(let after, let resetAt):
+            var message = "Rate limited"
+            if let after { message += ", retry after \(Int(after))s" }
+            if let resetAt { message += " — quota resets at \(GitHubClientError.resetClock(resetAt))" }
+            return message
         case .network(let message): return "Network error: \(message)"
         case .missingCredentials: return "No GitHub token configured"
         case .invalidResponse(let message): return "Invalid response: \(message)"
         case .writesDisabled:
             return "Live GitHub writes are disabled in this build — armed runs work against fixture data only"
         }
+    }
+
+    /// Local wall-clock time for a reset boundary, e.g. "15:45". Absolute (not
+    /// "in N min") because this lands in a per-repo failure reason that the user
+    /// may read long after the run finished, when a relative figure would lie.
+    private static func resetClock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
 

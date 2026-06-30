@@ -470,8 +470,11 @@ struct EnvironmentFooter: View {
             Label(model.typeCheckerLabel,
                   systemImage: model.typeCheckingAvailable ? "checkmark.seal" : "xmark.seal")
             if let quota = model.quotaText {
-                Label(quota, systemImage: "gauge.with.needle")
-                    .help("GitHub API quota remaining")
+                Label(model.quotaResetText.map { "\(quota) · \($0)" } ?? quota,
+                      systemImage: "gauge.with.needle")
+                    .foregroundStyle(model.quotaResetText == nil ? Color.primary : .orange)
+                    .help(model.quotaResetText.map { "GitHub API quota exhausted — \($0)" }
+                          ?? "GitHub API quota remaining")
             }
             if let retry = model.retryText {
                 Label(retry, systemImage: "arrow.clockwise")

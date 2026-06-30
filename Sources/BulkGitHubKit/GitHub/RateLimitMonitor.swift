@@ -101,4 +101,17 @@ public final class RateLimitMonitor: @unchecked Sendable {
         guard let remaining = displayStatus?.remaining else { return false }
         return remaining < 100
     }
+
+    /// "resets in 23 min" — time until the displayed pool's window rolls over,
+    /// relative to `now`. nil when no reset has been seen or it has already
+    /// passed. Live (refreshed each tick), so relative wording reads naturally;
+    /// the matching static `GitHubClientError` reason uses an absolute clock.
+    public var resetDisplay: String? {
+        lock.lock(); defer { lock.unlock() }
+        guard let resetAt = displayStatus?.resetAt else { return nil }
+        let seconds = resetAt.timeIntervalSince(now())
+        guard seconds > 0 else { return nil }
+        if seconds < 60 { return "resets in \(Int(seconds.rounded()))s" }
+        return "resets in \(Int((seconds / 60).rounded(.up))) min"
+    }
 }

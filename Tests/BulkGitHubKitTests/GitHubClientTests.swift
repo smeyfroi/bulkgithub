@@ -28,7 +28,7 @@ struct GitHubClientTests {
         // 4xx are definitive failures → surface immediately, never retry.
         #expect(!LiveGitHubClient.isTransientMergeError(.http(409, "head moved")))
         #expect(!LiveGitHubClient.isTransientMergeError(.http(405, "not mergeable")))
-        #expect(!LiveGitHubClient.isTransientMergeError(.rateLimited(retryAfter: 30)))
+        #expect(!LiveGitHubClient.isTransientMergeError(.rateLimited(retryAfter: 30, resetAt: nil)))
     }
 
     @Test("read retry classifier: 5xx retryable; rate-limit honored within cap; 4xx not")
@@ -41,9 +41,9 @@ struct GitHubClientTests {
         let client = LiveGitHubClient(apiHost: "https://api.github.com",
                                       tokenProvider: { "tok" }, jitter: { 1 })
         #expect(client.retryDelay(for: .network("x"), attempt: 1) == 0.5)
-        #expect(client.retryDelay(for: .rateLimited(retryAfter: 5), attempt: 1) == 5)
+        #expect(client.retryDelay(for: .rateLimited(retryAfter: 5, resetAt: nil), attempt: 1) == 5)
         // A rate-limit wait beyond the 60s cap fails fast (surface the quota).
-        #expect(client.retryDelay(for: .rateLimited(retryAfter: 120), attempt: 1) == nil)
+        #expect(client.retryDelay(for: .rateLimited(retryAfter: 120, resetAt: nil), attempt: 1) == nil)
         #expect(client.retryDelay(for: .http(409, "head moved"), attempt: 1) == nil)
         #expect(client.retryDelay(for: .notFound("x"), attempt: 1) == nil)
     }

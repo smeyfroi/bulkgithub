@@ -25,6 +25,9 @@ final class AppModel {
     /// update runs so they don't repeat the search.
     var jobState: [String: String] = [:]
     var quotaText: String?
+    /// "resets in 23 min" for the displayed quota pool — surfaced when the
+    /// budget is exhausted so the user knows when to come back.
+    var quotaResetText: String?
     /// Live "retrying GitHub…" line shown while a run grinds through transient
     /// errors — nil when nothing is retrying (or in fixture mode).
     var retryText: String?
@@ -513,6 +516,7 @@ final class AppModel {
         selectedRepo = nil
         canaryRepo = ""
         quotaText = nil
+        quotaResetText = nil
         logs = []
         auditEvents = []
         auditTrail = []
@@ -627,6 +631,7 @@ final class AppModel {
         writeArmed = false
         applyTargetsByPhase = [:]
         quotaText = nil
+        quotaResetText = nil
     }
 
     func clearResults() {
@@ -848,6 +853,9 @@ final class AppModel {
 
     private func refreshQuota() {
         quotaText = settings.useFixtureGitHub ? nil : rateLimit.display
+        // Only when the budget is running out — a reset countdown next to a
+        // healthy quota is just noise; next to an exhausted one it's the answer.
+        quotaResetText = (settings.useFixtureGitHub || !rateLimit.isLow) ? nil : rateLimit.resetDisplay
     }
 
     private func refreshRetry() {
@@ -1227,7 +1235,9 @@ final class AppModel {
         }
         refreshQuota()
         if let quotaText {
-            logs.append("◆ GitHub \(quotaText) requests remaining")
+            var line = "◆ GitHub \(quotaText) requests remaining"
+            if let quotaResetText { line += " — \(quotaResetText)" }
+            logs.append(line)
         }
         if writeMode == .armed {
             let acted = outcome.results.filter {
