@@ -164,6 +164,11 @@ final class AppModel {
     @ObservationIgnored private let engine = ScriptEngine()
     @ObservationIgnored private let rateLimit = RateLimitMonitor()
     @ObservationIgnored private let retryMonitor = RetryMonitor()
+    /// Session-lived so their benefit spans runs: the ETag cache makes re-scans
+    /// nearly free against quota, and the pacer keeps armed runs under GitHub's
+    /// secondary write limit. Shared across every client this session builds.
+    @ObservationIgnored private let etagCache = ETagCache()
+    @ObservationIgnored private let writePacer = WritePacer()
     @ObservationIgnored private var githubSession = LiveGitHubClient.makeSession()
     @ObservationIgnored private var runTask: Task<Void, Never>?
     /// In-flight validation, joinable: Run during the post-generation
@@ -839,7 +844,9 @@ final class AppModel {
                                 tokenProvider: { credentials.read(.githubToken) },
                                 session: githubSession,
                                 rateLimit: rateLimit,
-                                retry: retryMonitor)
+                                retry: retryMonitor,
+                                writePacer: writePacer,
+                                etagCache: etagCache)
     }
 
     /// Tear down the GitHub connection pool — the escape hatch for a wedged

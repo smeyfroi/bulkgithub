@@ -153,6 +153,102 @@ struct GitHubClientRetryTests {
     }
 }
 
+/// Conditional-GET (ETag) caching: a repeated single-object read is re-issued
+/// with If-None-Match, and a 304 replays the cached body without re-decoding a
+/// fresh one. Uses its own URLProtocol (not StubURLProtocol) so it shares no
+/// static state with the retry suite — the two suites run in parallel.
+@Suite("GitHub client ETag caching", .serialized)
+struct GitHubClientETagTests {
+    private func cachingClient(cache: ETagCache) -> LiveGitHubClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ConditionalStubProtocol.self]
+        return LiveGitHubClient(apiHost: "https://api.github.com",
+                                tokenProvider: { "tok" },
+                                session: URLSession(configuration: config),
+                                etagCache: cache, jitter: { 0 })
+    }
+
+    @Test("a repeated read is issued conditionally and a 304 replays the cached body")
+    func conditionalGetReplaysOn304() async throws {
+        let body = #"{"full_name":"o/n","default_branch":"trunk"}"#
+        ConditionalStubProtocol.respond { request in
+            // The second call must carry the validator from the first response.
+            if request.value(forHTTPHeaderField: "If-None-Match") == "\"v1\"" {
+                return (304, [:], "")
+            }
+            return (200, ["Etag": "\"v1\""], body)
+        }
+        let cache = ETagCache()
+        let client = cachingClient(cache: cache)
+
+        let first = try await client.getRepo(fullName: "o/n")
+        #expect(first.defaultBranch == "trunk")
+        #expect(cache.count == 1)
+
+        // The 304 carries no body, yet the repo still decodes — proof the cached
+        // body was replayed as a synthetic 200.
+        let second = try await client.getRepo(fullName: "o/n")
+        #expect(second.fullName == "o/n")
+        #expect(second.defaultBranch == "trunk")
+        #expect(ConditionalStubProtocol.requestCount == 2)
+    }
+
+    @Test("a changed resource returns a fresh 200 and refreshes the cached ETag")
+    func changedResourceRefreshesCache() async throws {
+        let counter = Counter()
+        ConditionalStubProtocol.respond { _ in
+            // Always answer 200 with a new body/etag — the resource keeps changing,
+            // so the server never returns 304.
+            let n = counter.next()
+            return (200, ["Etag": "\"v\(n)\""], #"{"full_name":"o/n","default_branch":"b\#(n)"}"#)
+        }
+        let cache = ETagCache()
+        let client = cachingClient(cache: cache)
+
+        let first = try await client.getRepo(fullName: "o/n")
+        let second = try await client.getRepo(fullName: "o/n")
+        #expect(first.defaultBranch == "b1")
+        #expect(second.defaultBranch == "b2")   // fresh body, not a stale replay
+        #expect(cache.count == 1)                // one URL, ETag refreshed in place
+    }
+}
+
+/// A header-aware URLProtocol for the ETag suite: the responder returns
+/// (statusCode, response headers, body) and can read the request's
+/// If-None-Match. Isolated statics so it never races the retry suite.
+final class ConditionalStubProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var _count = 0
+    private static var responder: ((URLRequest) -> (Int, [String: String], String))?
+
+    static var requestCount: Int { lock.lock(); defer { lock.unlock() }; return _count }
+
+    static func respond(_ responder: @escaping (URLRequest) -> (Int, [String: String], String)) {
+        lock.lock(); defer { lock.unlock() }
+        _count = 0
+        Self.responder = responder
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self._count += 1
+        let responder = Self.responder
+        Self.lock.unlock()
+        let (code, extra, body) = responder?(request) ?? (200, [:], "{}")
+        var headers = ["x-ratelimit-remaining": "100", "x-ratelimit-resource": "core"]
+        for (key, value) in extra { headers[key] = value }
+        let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil,
+                                       headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 /// Thread-safe call counter for the retry tests.
 final class Counter: @unchecked Sendable {
     private let lock = NSLock()
