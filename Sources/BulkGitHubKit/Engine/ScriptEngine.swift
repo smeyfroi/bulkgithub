@@ -82,6 +82,7 @@ public final class ScriptEngine {
                     phase: JobPhase,
                     params: [String: String],
                     github: GitHubClient,
+                    quotaGate: QuotaGate? = nil,
                     organisation: String,
                     configuration: EngineConfiguration = EngineConfiguration(),
                     initialState: [String: String] = [:],
@@ -160,7 +161,7 @@ public final class ScriptEngine {
         HostBindings.install(in: context, phase: phase, params: params,
                              github: github, organisation: organisation,
                              collector: collector, limiter: limiter, cancel: cancel,
-                             vmQueue: vmQueue, writeMode: configuration.writeMode,
+                             quotaGate: quotaGate, vmQueue: vmQueue, writeMode: configuration.writeMode,
                              prTitleOverride: configuration.prTitleOverride,
                              prBodyOverride: configuration.prBodyOverride)
 
@@ -216,6 +217,7 @@ public final class ScriptEngine {
         }
 
         let status = await Self.awaitSettlement(once: once, cancel: cancel,
+                                                quotaGate: quotaGate, runStart: start,
                                                 maxRunSeconds: configuration.maxRunSeconds)
         if status == .completed { collector.finalizeUnreportedCandidates() }
         collector.log("run \(status.label) in \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
@@ -226,14 +228,25 @@ public final class ScriptEngine {
 
     private static func awaitSettlement(once: SettleOnce,
                                         cancel: CancelBox,
+                                        quotaGate: QuotaGate?,
+                                        runStart: Date,
                                         maxRunSeconds: Double) async -> RunStatus {
         await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<RunStatus, Never>) in
                 let timeout = Task.detached {
-                    try? await Task.sleep(for: .seconds(maxRunSeconds))
-                    guard !Task.isCancelled else { return }
-                    cancel.cancel()
-                    once.resume(.failed("run exceeded \(Int(maxRunSeconds))s wall-clock limit"))
+                    // Bound ACTIVE execution time, excluding any quota pause: a
+                    // deliberate pause is not a hung run and must not trip the
+                    // wall-clock watchdog.
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(5))
+                        if Task.isCancelled { return }
+                        let paused = quotaGate?.totalPausedSeconds ?? 0
+                        if Date().timeIntervalSince(runStart) - paused >= maxRunSeconds {
+                            cancel.cancel()
+                            once.resume(.failed("run exceeded \(Int(maxRunSeconds))s active-execution limit"))
+                            return
+                        }
+                    }
                 }
                 once.onResume = { timeout.cancel() }
                 // The script may already have settled while handlers were
