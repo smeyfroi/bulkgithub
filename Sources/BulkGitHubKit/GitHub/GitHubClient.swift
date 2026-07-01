@@ -55,6 +55,11 @@ public protocol GitHubClient: Sendable {
     func searchCode(org: String, query: String) async throws -> [RepoRef]
     /// Returns nil when the file does not exist at that path/ref.
     func getContent(repo: String, path: String, ref: String?) async throws -> String?
+    /// Batched file reads: one round-trip per ~100 `(repo, path)` pairs (via
+    /// GraphQL in the live client, against the separate GraphQL quota pool).
+    /// Returns texts aligned to `requests`; nil where the repo/file is missing
+    /// or the blob is binary. Conformers without an override read serially.
+    func getContentBatch(_ requests: [ContentRequest]) async throws -> [String?]
     /// All blob paths in the repository tree at ref (default branch HEAD when
     /// nil). Glob filtering happens host-side — GitHub has no glob endpoint.
     func listFiles(repo: String, ref: String?) async throws -> [String]
@@ -106,4 +111,31 @@ public protocol GitHubClient: Sendable {
     /// job's own registry PRs before any call is made.
     func editPR(repo: String, number: Int, body: String) async throws
     func deleteBranch(repo: String, name: String) async throws
+}
+
+/// One entry in a batched file read: which file to fetch from which repo, at an
+/// optional ref (nil = the repo's default branch HEAD).
+public struct ContentRequest: Sendable, Equatable {
+    public let repo: String
+    public let path: String
+    public let ref: String?
+    public init(repo: String, path: String, ref: String? = nil) {
+        self.repo = repo
+        self.path = path
+        self.ref = ref
+    }
+}
+
+public extension GitHubClient {
+    /// Serial fallback for conformers without a batched implementation (e.g. the
+    /// fixture client): read each file in turn. The live client overrides this
+    /// with a single GraphQL round-trip per chunk.
+    func getContentBatch(_ requests: [ContentRequest]) async throws -> [String?] {
+        var results: [String?] = []
+        results.reserveCapacity(requests.count)
+        for request in requests {
+            results.append(try await getContent(repo: request.repo, path: request.path, ref: request.ref))
+        }
+        return results
+    }
 }
