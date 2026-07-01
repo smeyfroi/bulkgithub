@@ -154,6 +154,46 @@ enum HostBindings {
         gh.setObject(unsafeBitCast(getContent, to: AnyObject.self),
                      forKeyedSubscript: "getContent" as NSString)
 
+        // Batched read: one GraphQL round-trip per ~100 files instead of one
+        // REST GET each — the big lever against the primary read budget.
+        let getContentBatch: @convention(block) (JSValue?) -> JSValue = { pairsValue in
+            guard let pairs = pairsValue, pairs.isArray else {
+                return rejectedPromise("getContentBatch: an array of { repo, path } is required")
+            }
+            let count = Int(pairs.forProperty("length").toInt32())
+            var requests: [ContentRequest] = []
+            requests.reserveCapacity(count)
+            for i in 0..<count {
+                let element = pairs.atIndex(i)
+                guard let fullName = repoName(element?.forProperty("repo")),
+                      let path = stringArg(element?.forProperty("path")) else {
+                    return rejectedPromise("getContentBatch: each entry needs { repo, path }")
+                }
+                requests.append(ContentRequest(repo: fullName, path: path,
+                                               ref: stringArg(element?.forProperty("ref"))))
+            }
+            let batch = requests   // immutable snapshot for the concurrent closure
+            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+                let texts = try await github.getContentBatch(batch)
+                var present = 0
+                for (request, text) in zip(batch, texts) where text != nil {
+                    collector.recordReceipt(repo: request.repo, path: request.path, content: text)
+                    present += 1
+                }
+                collector.audit(kind: "gh.getContentBatch", repo: nil,
+                                detail: "\(requests.count) file(s) → \(present) present")
+                // NSNull preserves the null holes so the JS array stays aligned.
+                var aligned: [Any] = []
+                aligned.reserveCapacity(texts.count)
+                for text in texts {
+                    if let text { aligned.append(text) } else { aligned.append(NSNull()) }
+                }
+                return aligned
+            }
+        }
+        gh.setObject(unsafeBitCast(getContentBatch, to: AnyObject.self),
+                     forKeyedSubscript: "getContentBatch" as NSString)
+
         let listFiles: @convention(block) (JSValue?, JSValue?, JSValue?) -> JSValue = { repoValue, globValue, refValue in
             guard let fullName = repoName(repoValue) else {
                 return rejectedPromise("listFiles: repo (object or \"owner/name\") is required")

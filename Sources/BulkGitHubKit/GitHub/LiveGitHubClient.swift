@@ -180,9 +180,12 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     /// performFetch — they are guarded with per-endpoint re-checks instead,
     /// because a blind re-issue could act twice. Backoff sleeps are
     /// cancellation-aware (Task.sleep), so the run watchdog can pre-empt them.
-    private func fetch(_ request: URLRequest, cacheable: Bool = false) async throws -> (Data, HTTPURLResponse) {
-        let isRead = (request.httpMethod ?? "GET").uppercased() == "GET"
-        guard isRead else { return try await performFetch(request, cacheable: false) }
+    private func fetch(_ request: URLRequest, cacheable: Bool = false,
+                       isRead readOverride: Bool? = nil) async throws -> (Data, HTTPURLResponse) {
+        // A GraphQL query is a POST but a read: callers pass isRead: true so it
+        // is retried like a GET and not caught by the write pacer.
+        let isRead = readOverride ?? ((request.httpMethod ?? "GET").uppercased() == "GET")
+        guard isRead else { return try await performFetch(request, cacheable: false, isRead: false) }
 
         let id = UUID()
         let label = Self.retryLabel(request)
@@ -192,7 +195,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         while true {
             attempt += 1
             do {
-                let (data, http) = try await performFetch(request, cacheable: cacheable)
+                let (data, http) = try await performFetch(request, cacheable: cacheable, isRead: true)
                 // 5xx is surfaced as a returned status here (fetchJSON turns it
                 // into .http later) — retry while attempts and time remain.
                 if Self.isRetryableStatus(http.statusCode), attempt < Self.maxReadAttempts {
@@ -217,9 +220,10 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     /// rate-limit accounting, and the 403/429 rate-limit classification. Every
     /// read and write funnels through here. `cacheable` is set only for
     /// single-object GETs (not paginated ones, whose page boundaries can shift).
-    private func performFetch(_ request: URLRequest, cacheable: Bool) async throws -> (Data, HTTPURLResponse) {
-        // Throttle content-mutating requests under the secondary rate limit.
-        if Self.isMutating(request) { try await writePacer?.waitForSlot() }
+    private func performFetch(_ request: URLRequest, cacheable: Bool, isRead: Bool) async throws -> (Data, HTTPURLResponse) {
+        // Throttle content-mutating requests under the secondary rate limit — a
+        // GraphQL query is a POST but a read (isRead), so it is never paced.
+        if !isRead, Self.isMutating(request) { try await writePacer?.waitForSlot() }
 
         // Attach the stored validator for a conditional GET. Capture the whole
         // entry now (a value type) so a concurrent eviction can't strand a 304.
@@ -345,6 +349,81 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
             return URL(string: String(urlPart.dropFirst().dropLast()))
         }
         return nil
+    }
+
+    // MARK: GraphQL (batched reads)
+
+    /// One GraphQL POST. It is a *read* despite the POST verb (isRead: true), so
+    /// it retries transient errors like a GET and is never caught by the write
+    /// pacer. GitHub buckets its own `graphql` rate-limit pool via the response
+    /// headers, so it draws on a budget separate from the REST core quota.
+    private func graphQL(query: String, variables: [String: Any]) async throws -> [String: Any] {
+        var request = try request(path: "graphql")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
+        let (data, http) = try await fetch(request, isRead: true)
+        guard (200..<300).contains(http.statusCode) else {
+            let body = String(data: data.prefix(300), encoding: .utf8) ?? ""
+            throw GitHubClientError.http(http.statusCode, body)
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GitHubClientError.invalidResponse("graphql returned a non-object response")
+        }
+        // A partial failure (one bad alias) still returns data for the rest, so
+        // only fail the whole call when there is no data at all.
+        guard let dataObj = root["data"] as? [String: Any] else {
+            let message = (root["errors"] as? [[String: Any]])?.first?["message"] as? String
+            throw GitHubClientError.invalidResponse("graphql: \(message ?? "no data returned")")
+        }
+        return dataObj
+    }
+
+    public func getContentBatch(_ requests: [ContentRequest]) async throws -> [String?] {
+        guard !requests.isEmpty else { return [] }
+        var results = [String?](repeating: nil, count: requests.count)
+        // Chunk so one query stays well within GraphQL's node/complexity limits.
+        let chunkSize = 100
+        var start = 0
+        while start < requests.count {
+            let end = min(start + chunkSize, requests.count)
+            let texts = try await fetchContentChunk(Array(requests[start..<end]))
+            for (offset, text) in texts.enumerated() { results[start + offset] = text }
+            start = end
+        }
+        return results
+    }
+
+    /// One GraphQL query fetching a blob per `(repo, path)` in the chunk, aliased
+    /// `r0…rN`. Values pass as query variables (never string-interpolated) so
+    /// repo names and paths can't break out of the query. Returns texts aligned
+    /// to the chunk; nil for a malformed repo, a missing repo/file, or a binary
+    /// blob (GraphQL returns null `text` for those).
+    private func fetchContentChunk(_ chunk: [ContentRequest]) async throws -> [String?] {
+        var fields: [String] = []
+        var decls: [String] = []
+        var variables: [String: Any] = [:]
+        for (i, req) in chunk.enumerated() {
+            guard let slash = req.repo.firstIndex(of: "/") else { continue }
+            let owner = String(req.repo[..<slash])
+            let name = String(req.repo[req.repo.index(after: slash)...])
+            guard !owner.isEmpty, !name.isEmpty else { continue }
+            variables["o\(i)"] = owner
+            variables["n\(i)"] = name
+            variables["e\(i)"] = "\(req.ref ?? "HEAD"):\(req.path)"
+            decls.append("$o\(i): String!, $n\(i): String!, $e\(i): String!")
+            fields.append("r\(i): repository(owner: $o\(i), name: $n\(i)) "
+                          + "{ object(expression: $e\(i)) { ... on Blob { text } } }")
+        }
+        guard !fields.isEmpty else { return [String?](repeating: nil, count: chunk.count) }
+        let query = "query(\(decls.joined(separator: ", "))) { \(fields.joined(separator: " ")) }"
+        let data = try await graphQL(query: query, variables: variables)
+        return chunk.indices.map { i in
+            guard let repo = data["r\(i)"] as? [String: Any],
+                  let object = repo["object"] as? [String: Any],
+                  let text = object["text"] as? String else { return nil }
+            return text
+        }
     }
 
     private static func repoRef(from json: [String: Any]) -> RepoRef? {
