@@ -22,6 +22,12 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     private let session: URLSession
     private let rateLimit: RateLimitMonitor?
     private let retry: RetryMonitor?
+    /// Paces content-mutating requests under GitHub's secondary rate limit. nil
+    /// leaves writes unthrottled (tests, fixture mode).
+    private let writePacer: WritePacer?
+    /// Conditional-GET cache: a 304 replays the cached body and doesn't count
+    /// against quota. nil disables caching.
+    private let etagCache: ETagCache?
     /// Backoff jitter source (returns 0...1), injectable so the retry schedule
     /// is deterministic in tests.
     private let jitter: @Sendable () -> Double
@@ -48,12 +54,15 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     public init(apiHost: String, tokenProvider: @escaping TokenProvider,
                 session: URLSession = LiveGitHubClient.makeSession(), rateLimit: RateLimitMonitor? = nil,
                 retry: RetryMonitor? = nil,
+                writePacer: WritePacer? = nil, etagCache: ETagCache? = nil,
                 jitter: @escaping @Sendable () -> Double = { Double.random(in: 0...1) }) {
         self.apiHost = URL(string: apiHost) ?? URL(string: "https://api.github.com")!
         self.tokenProvider = tokenProvider
         self.session = session
         self.rateLimit = rateLimit
         self.retry = retry
+        self.writePacer = writePacer
+        self.etagCache = etagCache
         self.jitter = jitter
     }
 
@@ -171,9 +180,9 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
     /// performFetch — they are guarded with per-endpoint re-checks instead,
     /// because a blind re-issue could act twice. Backoff sleeps are
     /// cancellation-aware (Task.sleep), so the run watchdog can pre-empt them.
-    private func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    private func fetch(_ request: URLRequest, cacheable: Bool = false) async throws -> (Data, HTTPURLResponse) {
         let isRead = (request.httpMethod ?? "GET").uppercased() == "GET"
-        guard isRead else { return try await performFetch(request) }
+        guard isRead else { return try await performFetch(request, cacheable: false) }
 
         let id = UUID()
         let label = Self.retryLabel(request)
@@ -183,7 +192,7 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         while true {
             attempt += 1
             do {
-                let (data, http) = try await performFetch(request)
+                let (data, http) = try await performFetch(request, cacheable: cacheable)
                 // 5xx is surfaced as a returned status here (fetchJSON turns it
                 // into .http later) — retry while attempts and time remain.
                 if Self.isRetryableStatus(http.statusCode), attempt < Self.maxReadAttempts {
@@ -204,9 +213,22 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         }
     }
 
-    /// One HTTP round-trip: rate-limit accounting plus the 403/429 rate-limit
-    /// classification. Every read and write funnels through here.
-    private func performFetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    /// One HTTP round-trip: write pacing, conditional-GET (ETag) caching,
+    /// rate-limit accounting, and the 403/429 rate-limit classification. Every
+    /// read and write funnels through here. `cacheable` is set only for
+    /// single-object GETs (not paginated ones, whose page boundaries can shift).
+    private func performFetch(_ request: URLRequest, cacheable: Bool) async throws -> (Data, HTTPURLResponse) {
+        // Throttle content-mutating requests under the secondary rate limit.
+        if Self.isMutating(request) { try await writePacer?.waitForSlot() }
+
+        // Attach the stored validator for a conditional GET. Capture the whole
+        // entry now (a value type) so a concurrent eviction can't strand a 304.
+        var request = request
+        let isGet = (request.httpMethod ?? "GET").uppercased() == "GET"
+        let cacheKey = (cacheable && isGet) ? request.url?.absoluteString : nil
+        let cachedEntry = cacheKey.flatMap { etagCache?.entry(for: $0) }
+        if let cachedEntry { request.setValue(cachedEntry.etag, forHTTPHeaderField: "If-None-Match") }
+
         let data: Data
         let response: URLResponse
         do {
@@ -218,6 +240,15 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
             throw GitHubClientError.invalidResponse("non-HTTP response")
         }
         rateLimit?.update(from: http)
+
+        // 304 Not Modified: the conditional GET did not count against quota.
+        // Replay the cached body as a synthetic 200 so callers decode normally.
+        if http.statusCode == 304, let cachedEntry,
+           let replay = HTTPURLResponse(url: cachedEntry.url, statusCode: 200,
+                                        httpVersion: nil, headerFields: cachedEntry.headers) {
+            return (cachedEntry.data, replay)
+        }
+
         if http.statusCode == 403 || http.statusCode == 429 {
             let remaining = http.value(forHTTPHeaderField: "x-ratelimit-remaining")
             if remaining == "0" || http.statusCode == 429 {
@@ -227,11 +258,38 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
                 throw GitHubClientError.rateLimited(retryAfter: retry, resetAt: resetAt)
             }
         }
+
+        // Remember a fresh, ETag-bearing GET body so the next identical request
+        // can be issued conditionally.
+        if let cacheKey, (200..<300).contains(http.statusCode),
+           let etag = http.value(forHTTPHeaderField: "Etag"), let url = http.url {
+            etagCache?.store(key: cacheKey, entry: .init(
+                etag: etag, data: data, headers: Self.headerDict(http), url: url))
+        }
+
         return (data, http)
     }
 
+    /// A request that creates or changes server state — subject to write pacing.
+    private static func isMutating(_ request: URLRequest) -> Bool {
+        switch (request.httpMethod ?? "GET").uppercased() {
+        case "POST", "PUT", "PATCH", "DELETE": return true
+        default: return false
+        }
+    }
+
+    private static func headerDict(_ http: HTTPURLResponse) -> [String: String] {
+        var out: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            if let k = key as? String, let v = value as? String { out[k] = v }
+        }
+        return out
+    }
+
     private func fetchJSON(_ request: URLRequest, allow404: Bool = false) async throws -> Any? {
-        let (data, http) = try await fetch(request)
+        // Single-object reads are cacheable; a non-GET (a write's own request)
+        // simply won't match the GET-only cache path inside performFetch.
+        let (data, http) = try await fetch(request, cacheable: true)
         if http.statusCode == 404 {
             if allow404 { return nil }
             throw GitHubClientError.notFound(request.url?.path ?? "")
