@@ -28,6 +28,12 @@ final class AppModel {
     /// "resets in 23 min" for the displayed quota pool — surfaced when the
     /// budget is exhausted so the user knows when to come back.
     var quotaResetText: String?
+    /// Set while a run is paused by the quota gate (quota nearly spent). Drives
+    /// the pause banner; nil when the run is proceeding normally.
+    var quotaPauseText: String?
+    /// true when the pause is beyond the auto-wait cap and is holding for a
+    /// manual Resume rather than auto-resuming at the reset.
+    var quotaPauseIsHeld: Bool = false
     /// Live "retrying GitHub…" line shown while a run grinds through transient
     /// errors — nil when nothing is retrying (or in fixture mode).
     var retryText: String?
@@ -169,6 +175,12 @@ final class AppModel {
     /// secondary write limit. Shared across every client this session builds.
     @ObservationIgnored private let etagCache = ETagCache()
     @ObservationIgnored private let writePacer = WritePacer()
+    /// Proactive rate-limit gate: pauses a run as quota runs out and resumes
+    /// when the window resets. lazy because it reads the session's rateLimit.
+    @ObservationIgnored private lazy var quotaGate = QuotaGate(rateLimit: rateLimit)
+    /// One-shot guard so a held (beyond-cap) pause notifies the walked-away user
+    /// exactly once per run, not on every poll tick.
+    @ObservationIgnored private var notifiedHeldPause = false
     @ObservationIgnored private var githubSession = LiveGitHubClient.makeSession()
     @ObservationIgnored private var runTask: Task<Void, Never>?
     /// In-flight validation, joinable: Run during the post-generation
@@ -522,6 +534,8 @@ final class AppModel {
         canaryRepo = ""
         quotaText = nil
         quotaResetText = nil
+        quotaPauseText = nil
+        quotaPauseIsHeld = false
         logs = []
         auditEvents = []
         auditTrail = []
@@ -637,6 +651,8 @@ final class AppModel {
         applyTargetsByPhase = [:]
         quotaText = nil
         quotaResetText = nil
+        quotaPauseText = nil
+        quotaPauseIsHeld = false
     }
 
     func clearResults() {
@@ -869,6 +885,35 @@ final class AppModel {
         retryText = settings.useFixtureGitHub ? nil : retryMonitor.display
     }
 
+    /// Reflect the quota gate's pause state into the UI, and notify a
+    /// walked-away user once when a run holds for a long (beyond-cap) reset.
+    private func refreshPauseState() {
+        guard let pause = quotaGate.pauseState else {
+            quotaPauseText = nil
+            quotaPauseIsHeld = false
+            return
+        }
+        let clock = pause.resumeAt.formatted(date: .omitted, time: .shortened)
+        let mins = max(0, Int((pause.resumeAt.timeIntervalSinceNow / 60).rounded(.up)))
+        if pause.heldForManual {
+            quotaPauseText = "Paused — GitHub quota exhausted; resets \(clock) (~\(mins) min). Resume now or Stop."
+            if !notifiedHeldPause {
+                notifiedHeldPause = true
+                NotificationService.notifyRunComplete(
+                    title: "BulkGitHub — paused on GitHub quota",
+                    body: "Quota resets at \(clock) (~\(mins) min). Resume now, or cancel the run.")
+            }
+        } else {
+            quotaPauseText = "Paused — GitHub quota exhausted; resuming \(clock) (~\(mins) min)."
+        }
+        quotaPauseIsHeld = pause.heldForManual
+    }
+
+    /// Manual "Resume now" — skip the remaining quota wait and try again.
+    func resumeQuotaWait() {
+        quotaGate.resumeNow()
+    }
+
     /// Notify on completion when the run hit retries or ran long — but only if
     /// the user has walked away (handled in NotificationService). Skips cancels.
     private func notifyIfWalkedAway(outcome: RunOutcome, phase: JobPhase, retried: Bool) {
@@ -1070,16 +1115,23 @@ final class AppModel {
         // Poll the retry monitor while the run is live: the footer refresh is
         // otherwise pumped by .audit events, which only fire on SUCCESS — a run
         // stalled in backoff would never update the footer without this.
+        quotaGate.reset()
+        notifiedHeldPause = false
         let retryPoll = Task { @MainActor [weak self] in
             while self?.running == true {
                 self?.refreshRetry()
+                self?.refreshPauseState()
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
             self?.retryText = nil
+            self?.quotaPauseText = nil
+            self?.quotaPauseIsHeld = false
         }
         defer {
             retryPoll.cancel()
             retryText = nil
+            quotaPauseText = nil
+            quotaPauseIsHeld = false
             running = false
             currentRunIsArmed = false
             // Write mode is per-run: it never survives the run that used it
@@ -1159,6 +1211,10 @@ final class AppModel {
                                        phase: runPhase,
                                        params: params,
                                        github: githubClient(),
+                                       // Fixture runs never touch the live quota
+                                       // monitor — don't let a prior live run's
+                                       // low reading pause them.
+                                       quotaGate: settings.useFixtureGitHub ? nil : quotaGate,
                                        organisation: settings.organisation,
                                        configuration: configuration,
                                        initialState: jobState) { [weak self] event in

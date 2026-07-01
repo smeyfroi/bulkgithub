@@ -12,6 +12,10 @@ struct MainView: View {
         // its own space, so scrolling content (console, results) can never
         // hide its last line underneath it.
         VStack(spacing: 0) {
+            if let pause = model.quotaPauseText {
+                QuotaPauseBanner(text: pause, held: model.quotaPauseIsHeld,
+                                 onResume: { model.resumeQuotaWait() })
+            }
             // Deterministic three-pane tiling via HSplitView, NOT
             // NavigationSplitView: on macOS 26 the navigation sidebars are
             // glass panels floating over a full-width content layer, and the
@@ -452,6 +456,34 @@ struct SidebarView: View {
 
 /// Ambient environment status — deliberately out of the sidebar so it doesn't
 /// compete with the workflow; lives in a quiet footer across the window.
+/// A run-halting banner shown while the quota gate has paused the run: the
+/// countdown/held message, plus a manual Resume. Stop stays in the toolbar.
+struct QuotaPauseBanner: View {
+    let text: String
+    let held: Bool
+    let onResume: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: held ? "exclamationmark.triangle.fill" : "pause.circle.fill")
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.callout)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Resume now", action: onResume)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(held ? 0.20 : 0.12))
+        .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
 struct EnvironmentFooter: View {
     @Environment(AppModel.self) private var model
 

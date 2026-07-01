@@ -55,12 +55,13 @@ enum HostBindings {
                         collector: JobCollector,
                         limiter: AsyncSemaphore,
                         cancel: CancelBox,
+                        quotaGate: QuotaGate? = nil,
                         vmQueue: DispatchQueue,
                         writeMode: EngineConfiguration.WriteMode = .dryRun,
                         prTitleOverride: String? = nil,
                         prBodyOverride: String? = nil) {
         installGitHub(in: context, phase: phase, github: github, organisation: organisation,
-                      collector: collector, limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                      collector: collector, limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue,
                       writeMode: writeMode,
                       prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
         installJob(in: context, params: params, collector: collector)
@@ -73,14 +74,14 @@ enum HostBindings {
     private static func installGitHub(in context: JSContext, phase: JobPhase,
                                       github: GitHubClient, organisation: String,
                                       collector: JobCollector, limiter: AsyncSemaphore,
-                                      cancel: CancelBox, vmQueue: DispatchQueue,
+                                      cancel: CancelBox, quotaGate: QuotaGate?, vmQueue: DispatchQueue,
                                       writeMode: EngineConfiguration.WriteMode = .dryRun,
                                       prTitleOverride: String? = nil,
                                       prBodyOverride: String? = nil) {
         guard let gh = JSValue(newObjectIn: context) else { return }
 
         let listOrgRepos: @convention(block) () -> JSValue = {
-            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let all = try await github.listOrgRepos(org: organisation)
                 let repos = all.filter { !collector.isOutsideCanary($0.fullName) }
                 collector.registerCandidates(repos)
@@ -98,7 +99,7 @@ enum HostBindings {
             guard let fullName = repoName(repoValue) else {
                 return rejectedPromise("getRepo: repo (object or \"owner/name\") is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let repo = try await github.getRepo(fullName: fullName)
                 collector.remember(repo)
                 collector.audit(kind: "gh.getRepo", repo: fullName,
@@ -113,7 +114,7 @@ enum HostBindings {
             guard let query = stringArg(queryValue) else {
                 return rejectedPromise("searchCode: query string is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let all = try await github.searchCode(org: organisation, query: query)
                 let repos = all.filter { !collector.isOutsideCanary($0.fullName) }
                 collector.registerCandidates(repos)
@@ -133,7 +134,7 @@ enum HostBindings {
                 return rejectedPromise("getContent: path string is required")
             }
             let ref = stringArg(refValue)
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 do {
                     let content = try await github.getContent(repo: fullName, path: path, ref: ref)
                     if let content {
@@ -159,7 +160,7 @@ enum HostBindings {
             }
             let glob = stringArg(globValue)
             let ref = stringArg(refValue)
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let all = try await github.listFiles(repo: fullName, ref: ref)
                 let paths = glob.map { GlobMatcher.filter(all, glob: $0) } ?? all
                 collector.audit(kind: "gh.listFiles", repo: fullName,
@@ -174,7 +175,7 @@ enum HostBindings {
             guard let fullName = repoName(repoValue), let ref = stringArg(refValue) else {
                 return rejectedPromise("getRef: repo and ref are required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let sha = try await github.getRef(repo: fullName, ref: ref)
                 collector.audit(kind: "gh.getRef", repo: fullName, detail: "\(ref) → \(sha ?? "absent")")
                 return sha.map { ["sha": $0] }
@@ -189,7 +190,7 @@ enum HostBindings {
             }
             let head = stringArg(optsValue?.objectForKeyedSubscript("head"))
             let state = stringArg(optsValue?.objectForKeyedSubscript("state")) ?? "open"
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let prs = try await github.listPRs(repo: fullName, head: head, state: state)
                 collector.audit(kind: "gh.listPRs", repo: fullName, detail: "→ \(prs.count) PRs")
                 return prs.map(\.scriptValue)
@@ -202,7 +203,7 @@ enum HostBindings {
             guard let query = stringArg(queryValue) else {
                 return rejectedPromise("searchPRs: query string is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let prs = try await github.searchPRs(org: organisation, query: query)
                 collector.audit(kind: "gh.searchPRs", repo: nil, detail: "\(query) → \(prs.count) PRs")
                 return prs.map(\.scriptValue)
@@ -216,7 +217,7 @@ enum HostBindings {
         // properties earns a property receipt that lets job.reportMatch accept a
         // property-based match (authoritative data, not a stale search index).
         let listOrgProperties: @convention(block) () -> JSValue = {
-            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let all = try await github.listOrgProperties(org: organisation)
                 let scoped = all.filter { !collector.isOutsideCanary($0.repo.fullName) }
                 collector.registerCandidates(scoped.map(\.repo))
@@ -238,7 +239,7 @@ enum HostBindings {
             guard let fullName = repoName(repoValue) else {
                 return rejectedPromise("getProperties: repo (object or \"owner/name\") is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let props = try await github.getProperties(repo: fullName)
                 collector.recordPropertyReceipt(repo: fullName, values: props)
                 collector.audit(kind: "gh.getProperties", repo: fullName,
@@ -250,7 +251,7 @@ enum HostBindings {
                      forKeyedSubscript: "getProperties" as NSString)
 
         let listPropertyDefs: @convention(block) () -> JSValue = {
-            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let defs = try await github.listPropertyDefs(org: organisation)
                 collector.cachePropertyDefs(defs)
                 collector.audit(kind: "gh.listPropertyDefs", repo: nil,
@@ -273,12 +274,12 @@ enum HostBindings {
             switch writeMode {
             case .dryRun:
                 installRecordingWrites(on: gh, collector: collector,
-                                       limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                       limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue,
                                        prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             case .armed:
                 installArmedWrites(on: gh, github: github, organisation: organisation,
                                    collector: collector,
-                                   limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                   limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue,
                                    prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
             }
         }
@@ -287,7 +288,7 @@ enum HostBindings {
         // armed split as updates — the same reviewed script re-runs armed.
         if phase == .merge {
             installMergeSurface(on: gh, github: github, collector: collector,
-                                limiter: limiter, cancel: cancel, vmQueue: vmQueue,
+                                limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue,
                                 armed: writeMode == .armed)
         }
 
@@ -295,7 +296,7 @@ enum HostBindings {
     }
 
     private static func installRecordingWrites(on gh: JSValue, collector: JobCollector,
-                                               limiter: AsyncSemaphore, cancel: CancelBox,
+                                               limiter: AsyncSemaphore, cancel: CancelBox, quotaGate: QuotaGate?,
                                                vmQueue: DispatchQueue,
                                                prTitleOverride: String? = nil,
                                                prBodyOverride: String? = nil) {
@@ -310,7 +311,7 @@ enum HostBindings {
                 return rejectedPromise(
                     "createBranch: branch names must start with \"bulkgh/\" — job-prefixed branches are the only ones this app will ever create or delete (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 collector.recordAction(repo: fullName, .createBranch(name: name, fromSha: sha))
                 collector.audit(kind: "plan.createBranch", repo: fullName,
                                 detail: "\(name) from \(String(sha.prefix(12))) (dry-run)")
@@ -335,7 +336,7 @@ enum HostBindings {
             guard branch.hasPrefix("bulkgh/") else {
                 return rejectedPromise("putContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let before = collector.fetchedContent(repo: fullName, path: path)
                 collector.recordAction(repo: fullName, .putContent(path: path, branch: branch,
                                                                    message: message,
@@ -363,7 +364,7 @@ enum HostBindings {
             guard branch.hasPrefix("bulkgh/") else {
                 return rejectedPromise("deleteContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let before = collector.fetchedContent(repo: fullName, path: path)
                 collector.recordAction(repo: fullName, .deleteFile(path: path, branch: branch,
                                                                    message: message, before: before))
@@ -392,7 +393,7 @@ enum HostBindings {
             guard head.hasPrefix("bulkgh/") else {
                 return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 collector.recordAction(repo: fullName, .createPR(headRef: head, title: title, body: body))
                 collector.audit(kind: "plan.createPR", repo: fullName,
                                 detail: "\"\(title)\" from \(head) (dry-run)")
@@ -413,7 +414,7 @@ enum HostBindings {
             guard let desired = parsePropertyValues(valuesValue), !desired.isEmpty else {
                 return rejectedPromise("setProperties: a non-empty values object { name: value } is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 if collector.isOutsideCanary(fullName) {
                     collector.recordAction(repo: fullName, .setProperties(values: desired, before: [:]))
                     return nil
@@ -462,7 +463,7 @@ enum HostBindings {
     private static func installArmedWrites(on gh: JSValue, github: GitHubClient,
                                            organisation: String,
                                            collector: JobCollector,
-                                           limiter: AsyncSemaphore, cancel: CancelBox,
+                                           limiter: AsyncSemaphore, cancel: CancelBox, quotaGate: QuotaGate?,
                                            vmQueue: DispatchQueue,
                                            prTitleOverride: String? = nil,
                                            prBodyOverride: String? = nil) {
@@ -488,7 +489,7 @@ enum HostBindings {
                 return rejectedPromise(
                     "createBranch: branch names must start with \"bulkgh/\" — job-prefixed branches are the only ones this app will ever create or delete (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard case .createBranch(let expectedName, _)? = collector.expectedNextAction(repo: fullName),
                       expectedName == name else {
@@ -539,7 +540,7 @@ enum HostBindings {
             guard branch.hasPrefix("bulkgh/") else {
                 return rejectedPromise("putContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard case .putContent(let expectedPath, let expectedBranch, _, let expectedBefore, let expectedAfter)?
                         = collector.expectedNextAction(repo: fullName),
@@ -597,7 +598,7 @@ enum HostBindings {
             guard branch.hasPrefix("bulkgh/") else {
                 return rejectedPromise("deleteContent: writes are only allowed on \"bulkgh/\"-prefixed branches (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard case .deleteFile(let expectedPath, let expectedBranch, _, let expectedBefore)?
                         = collector.expectedNextAction(repo: fullName),
@@ -651,7 +652,7 @@ enum HostBindings {
             guard head.hasPrefix("bulkgh/") else {
                 return rejectedPromise("createPR: head must be a \"bulkgh/\"-prefixed branch (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard case .createPR(let expectedHead, let expectedTitle, let expectedBody)?
                         = collector.expectedNextAction(repo: fullName),
@@ -725,7 +726,7 @@ enum HostBindings {
             guard let desired = parsePropertyValues(valuesValue), !desired.isEmpty else {
                 return rejectedPromise("setProperties: a non-empty values object { name: value } is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard case .setProperties(let expectedValues, let expectedBefore)? = collector.expectedNextAction(repo: fullName),
                       expectedValues == desired else {
@@ -778,7 +779,7 @@ enum HostBindings {
     /// Dry run records a plan; armed conforms to that plan and executes.
     private static func installMergeSurface(on gh: JSValue, github: GitHubClient,
                                             collector: JobCollector,
-                                            limiter: AsyncSemaphore, cancel: CancelBox,
+                                            limiter: AsyncSemaphore, cancel: CancelBox, quotaGate: QuotaGate?,
                                             vmQueue: DispatchQueue, armed: Bool) {
         @Sendable func preflight(_ repo: String) throws {
             guard armed else { return }
@@ -803,7 +804,7 @@ enum HostBindings {
         }
 
         let listJobPRs: @convention(block) () -> JSValue = {
-            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 var prs: [PullRequestRef] = []
                 for entry in collector.registryPRs {
                     let pr = try await github.getPR(repo: entry.repo, number: entry.number)
@@ -818,7 +819,7 @@ enum HostBindings {
                      forKeyedSubscript: "listJobPRs" as NSString)
 
         let listJobBranches: @convention(block) () -> JSValue = {
-            hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let branches = collector.registryBranches.map {
                     ["repo": $0.repo, "name": $0.name]
                 }
@@ -842,7 +843,7 @@ enum HostBindings {
                   let expectedHeadSha = stringArg(opts.objectForKeyedSubscript("expectedHeadSha")) else {
                 return rejectedPromise("mergePR: opts { expectedHeadSha } is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard collector.isRegistryPR(repo: fullName, number: number) else {
                     throw GitHubClientError.http(403,
@@ -911,7 +912,7 @@ enum HostBindings {
                 return rejectedPromise("closePR: PR number is required")
             }
             let number = Int(numberValue.toInt32())
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard collector.isRegistryPR(repo: fullName, number: number) else {
                     throw GitHubClientError.http(403,
@@ -948,7 +949,7 @@ enum HostBindings {
             guard let body = stringArg(bodyValue) else {
                 return rejectedPromise("editPR: body is required")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard collector.isRegistryPR(repo: fullName, number: number) else {
                     throw GitHubClientError.http(403,
@@ -984,7 +985,7 @@ enum HostBindings {
             guard name.hasPrefix("bulkgh/") else {
                 return rejectedPromise("deleteBranch: only \"bulkgh/\"-prefixed job branches can be deleted (host rule)")
             }
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 try preflight(fullName)
                 guard collector.isRegistryBranch(repo: fullName, name: name) else {
                     throw GitHubClientError.http(403,
@@ -1245,7 +1246,7 @@ enum HostBindings {
     /// cooperative pool (running it there starves the pool and deadlocks once
     /// enough host calls are in flight), and single-queue execution keeps the
     /// VM single-threaded.
-    private static func hostPromise(limiter: AsyncSemaphore, cancel: CancelBox,
+    private static func hostPromise(limiter: AsyncSemaphore, cancel: CancelBox, quotaGate: QuotaGate?,
                                     vmQueue: DispatchQueue,
                                     work: @escaping @Sendable () async throws -> Any?) -> JSValue {
         let ctx = JSContext.current()!
@@ -1258,6 +1259,9 @@ enum HostBindings {
                 }
                 do {
                     if cancel.isCancelled { throw HostError.cancelled }
+                    // Proactive rate-limit gate: pauses here (holding this slot)
+                    // when quota is nearly spent, resuming when the window rolls.
+                    try await quotaGate?.awaitClearance(isCancelled: { cancel.isCancelled })
                     let value = try await work()
                     await limiter.signal()
                     settle(resolve, value ?? NSNull())
