@@ -33,7 +33,10 @@ struct GoldenRecipeTests {
         #expect(statusByRepo["example-org/web-frontend"] == .skipped)
         #expect(statusByRepo["example-org/legacy-batch"] == .skipped)   // archived
         #expect(statusByRepo["example-org/infra-tools"] == .skipped)    // stale search hit
-        #expect(statusByRepo["example-org/flaky-service"] == .failed)
+        // A batched read can't isolate one repo's fetch failure: the flaky
+        // repo's content returns null, indistinguishable from absent, so it is
+        // skipped rather than failed (the tradeoff for one request per ~100).
+        #expect(statusByRepo["example-org/flaky-service"] == .skipped)
         #expect(statusByRepo["example-org/docs-site"] == nil)           // never a candidate
 
         let match = outcome.results.first { $0.id == "example-org/api-service" }
@@ -43,12 +46,11 @@ struct GoldenRecipeTests {
         let skipReason = outcome.results.first { $0.id == "example-org/web-frontend" }?.reason
         #expect(skipReason?.contains("differs") == true)
 
-        // Audit trail covers the effectful host calls, including the failed
-        // fetch against the flaky repo.
+        // Audit trail covers the effectful host calls: the search, plus ONE
+        // batched read over every candidate (not a getContent each).
         #expect(outcome.auditEvents.contains { $0.kind == "gh.searchCode" })
-        let fetches = outcome.auditEvents.filter { $0.kind == "gh.getContent" }
-        #expect(fetches.count == 5)
-        #expect(fetches.contains { $0.repo == "example-org/flaky-service" && $0.detail.contains("failed") })
+        #expect(outcome.auditEvents.filter { $0.kind == "gh.getContentBatch" }.count == 1)
+        #expect(outcome.auditEvents.filter { $0.kind == "gh.getContent" }.isEmpty)
         #expect(outcome.auditEvents.filter { $0.kind == "job.reportMatch" }.count == 2)
     }
 
@@ -107,7 +109,9 @@ struct ReadmeLicenseRecipeTests {
         #expect(statusByRepo["example-org/api-service"] == .skipped)      // already has the section
         #expect(statusByRepo["example-org/legacy-batch"] == .skipped)     // archived
         #expect(statusByRepo["example-org/infra-tools"] == .skipped)      // no README
-        #expect(statusByRepo["example-org/flaky-service"] == .failed)
+        // Batched read: the flaky repo's fetch failure returns null, so it
+        // skips as "absent" rather than failing (no per-repo isolation).
+        #expect(statusByRepo["example-org/flaky-service"] == .skipped)
 
         // Matches carry forward for the update recipe (JSON-encoded, with
         // escaped slashes — assert on the repo names).
