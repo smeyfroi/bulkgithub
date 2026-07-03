@@ -89,6 +89,12 @@ public final class ValidationPipeline: @unchecked Sendable {
 
     // MARK: - Meta extraction
 
+    /// Hard ceiling on the synchronous evaluation of a script body during meta
+    /// extraction. Extraction touches only top-level declarations and finishes
+    /// in well under a millisecond; this only ever fires on a runaway — e.g. a
+    /// malicious top-level loop in a dropped-in recipe file.
+    private static let metaExtractionTimeLimitSeconds = 2.0
+
     /// Evaluates the transpiled script in a bare context (no host bindings)
     /// and reads the `meta` declaration and `main` function. House rule:
     /// scripts contain only declarations at top level, so this is side-effect
@@ -101,6 +107,14 @@ public final class ValidationPipeline: @unchecked Sendable {
         context.exceptionHandler = { _, value in
             exception = value?.toString() ?? "unknown exception"
         }
+        // Scan-time guard: this evaluates the FULL (possibly untrusted) script
+        // body at top level, so a dropped-in recipe with a top-level infinite
+        // loop would otherwise hang catalog construction before any review.
+        // Bound synchronous execution; a well-formed recipe runs in microseconds.
+        let group = JSContextGetGroup(context.jsGlobalContextRef)
+        let watchdogInstalled = JSCWatchdogAPI.setHardLimit(
+            group: group, seconds: metaExtractionTimeLimitSeconds)
+        defer { if watchdogInstalled { JSCWatchdogAPI.clearLimit(group: group) } }
         context.evaluateScript(javaScript)
         if let exception { throw ValidationError.evaluationFailed(exception) }
 

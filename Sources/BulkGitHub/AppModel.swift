@@ -240,10 +240,10 @@ final class AppModel {
                 refreshApplyTargets()
             }
         }
-        if !restoredJob {
-            loadGoldenRecipe()
-        }
         userRecipes = recipeStore.load()
+        // The catalog is built from files off the main actor; on a fresh launch
+        // the golden recipe loads into the editor once it's ready.
+        loadRecipeCatalog(loadGoldenWhenReady: !restoredJob)
     }
 
     private static func byPhase<T>(_ raw: [String: T]?) -> [JobPhase: T] {
@@ -744,7 +744,8 @@ final class AppModel {
     }
 
     func loadRecipe(_ recipe: Recipe) {
-        guard let source = recipe.source, !running, !generating else { return }
+        guard !running, !generating else { return }
+        let source = recipe.source
         if recipe.phase != phase {
             stashWorkspace()
             phase = recipe.phase
@@ -778,9 +779,19 @@ final class AppModel {
     }
 
     func loadRecipe(named name: String) {
-        guard let recipe = RecipeCatalog.recipe(id: name) else { return }
+        guard let recipe = recipes.first(where: { $0.id == name }) else { return }
         loadRecipe(recipe)
     }
+
+    // MARK: Recipe catalog (bundled, built from files at launch)
+
+    /// The bundled recipe catalog, built by reading each recipe file's meta at
+    /// launch (off the main actor). Empty until the first load completes.
+    private(set) var recipes: [Recipe] = []
+    /// True while the initial catalog build is in flight — drives a brief
+    /// "loading recipes" row so the empty library doesn't read as "no recipes".
+    private(set) var recipesLoading = false
+    @ObservationIgnored private lazy var recipeLoader = RecipeCatalogLoader(service: typescript)
 
     // MARK: User recipes (saved from the workspace, file-backed)
 
@@ -839,6 +850,23 @@ final class AppModel {
             statusLine = "Deleted recipe \"\(recipe.title)\""
         } catch {
             statusLine = "Could not delete recipe: \(error.localizedDescription)"
+        }
+    }
+
+    /// Build the bundled catalog off the main actor (transpile + meta read per
+    /// file), then publish it. On a fresh launch (no restored job) load the
+    /// golden recipe into the editor once the catalog is ready.
+    private func loadRecipeCatalog(loadGoldenWhenReady: Bool) {
+        recipesLoading = true
+        let loader = recipeLoader
+        Task { [weak self] in
+            let loaded = await Task.detached(priority: .userInitiated) { loader.load() }.value
+            guard let self else { return }
+            self.recipes = loaded
+            self.recipesLoading = false
+            if loadGoldenWhenReady, self.scriptText.isEmpty, !self.running, !self.generating {
+                self.loadGoldenRecipe()
+            }
         }
     }
 

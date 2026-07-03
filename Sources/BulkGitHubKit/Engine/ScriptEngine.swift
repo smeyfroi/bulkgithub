@@ -313,6 +313,19 @@ enum JSCWatchdogAPI {
         return true
     }
 
+    /// A minimal one-shot limit for throwaway contexts that evaluate UNTRUSTED
+    /// source (meta extraction of dropped-in recipe files): terminate execution
+    /// the first time `seconds` elapse. No cancellation plumbing, no re-arm —
+    /// the callback just says "terminate", which is all a scan-time guard needs.
+    @discardableResult
+    static func setHardLimit(group: JSContextGroupRef?, seconds: Double) -> Bool {
+        guard let setLimitFn else { return false }
+        setLimitFn(group, seconds, hardCallback, nil)
+        return true
+    }
+
+    private static let hardCallback: ShouldTerminate = { _, _ in true }
+
     static func clearLimit(group: JSContextGroupRef?) {
         clearLimitFn?(group)
     }
