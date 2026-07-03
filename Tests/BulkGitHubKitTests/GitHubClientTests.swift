@@ -62,6 +62,20 @@ struct GitHubClientTests {
                                     tokenProvider: { "tok" }, jitter: { 0 })
         #expect(none.backoffDelay(attempt: 3) == 0)
     }
+
+    @Test("write 403 hint preserves GitHub's message and appends a permission nudge")
+    func writeForbiddenHint() {
+        // GitHub's own body is kept verbatim, then the nudge is appended — a
+        // write 403 has several possible causes, so it points at the token's
+        // permissions without claiming which one is missing.
+        let withBody = LiveGitHubClient.writeForbiddenHint(body: "  Resource not accessible  ")
+        #expect(withBody.hasPrefix("Resource not accessible — "))
+        #expect(withBody.contains("permission this update requires"))
+        // An empty body degrades to the nudge alone (no leading separator).
+        let empty = LiveGitHubClient.writeForbiddenHint(body: "   ")
+        #expect(!empty.hasPrefix("—"))
+        #expect(empty.contains("check the fine-grained PAT's permissions"))
+    }
 }
 
 /// Integration: drive fetch()'s retry loop through a stubbed URLSession to

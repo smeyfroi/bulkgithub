@@ -282,6 +282,19 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         }
     }
 
+    /// A 403 on a write has many possible causes — a fine-grained PAT can satisfy
+    /// one operation yet lack the specific permission this update needs (e.g. some
+    /// paths and update kinds are gated behind their own permission, separate from
+    /// the one that let the read succeed). Rather than guess which, keep GitHub's
+    /// own message and append a nudge to re-check the token's permissions for this
+    /// operation.
+    static func writeForbiddenHint(body: String) -> String {
+        let hint = "the token may not have the permission this update requires — "
+            + "check the fine-grained PAT's permissions for this operation."
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? hint : "\(trimmed) — \(hint)"
+    }
+
     private static func headerDict(_ http: HTTPURLResponse) -> [String: String] {
         var out: [String: String] = [:]
         for (key, value) in http.allHeaderFields {
@@ -300,6 +313,9 @@ public final class LiveGitHubClient: GitHubClient, @unchecked Sendable {
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data.prefix(300), encoding: .utf8) ?? ""
+            if http.statusCode == 403, Self.isMutating(request) {
+                throw GitHubClientError.http(403, Self.writeForbiddenHint(body: body))
+            }
             throw GitHubClientError.http(http.statusCode, body)
         }
         return try JSONSerialization.jsonObject(with: data)

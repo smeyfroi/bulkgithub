@@ -122,6 +122,7 @@ Then grant exactly these — leave everything else on *No access*:
 | Repository | **Metadata** | Read-only | listing repos, default branches, per-repo property reads (mandatory on every fine-grained token) |
 | Repository | **Contents** | Read and write | reading files; creating branches, commits, deleting branches (Find + Update) |
 | Repository | **Pull requests** | Read and write | opening, merging, closing, editing PRs (Update + Complete) |
+| Repository | **Workflows** | Read and write | creating/updating/**deleting** files under `.github/workflows/` — **only** if a campaign touches Actions workflow files (see gotcha below) |
 | Repository | **Custom properties** | Read and write | *setting* custom property values |
 | Organization | **Custom properties** | Read-only | *querying* repos by custom property, and reading the org schema |
 
@@ -129,12 +130,22 @@ Then grant exactly these — leave everything else on *No access*:
 find and inspect; add Organization → Custom properties (Read-only) for property
 queries. The write rows are only needed once you arm Update or Complete.
 
-**Two gotchas after generating it:**
+**Three gotchas after generating it:**
 
 - If your org **requires approval** for fine-grained tokens, the token stays
   *pending* until an org owner approves it — the app will hit 403s until then.
 - The **Custom properties** permissions are only offered if you're an org owner
   (or hold the custom-properties manager role) for that organisation.
+- **Workflow files are gated separately.** GitHub locks anything under
+  `.github/workflows/` behind the **Workflows** permission, *independent* of
+  Contents. So a token with Contents: Read and write happily reads, commits, and
+  deletes ordinary files, but any create/update/delete of a file under
+  `.github/workflows/` fails with a **403** whose error points back at the
+  contents endpoint (`…/rest/repos/contents#delete-a-file`) — not at anything that looks
+  like a permission or rate-limit page. That misleading URL makes it read like a
+  broken token or a protected branch; it is neither. Grant **Workflows: Read and
+  write** (and re-approve the token if the org requires it) only if your
+  campaigns edit or delete workflow files.
 
 Reference: [GitHub — permissions required for fine-grained PATs](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens).
 
