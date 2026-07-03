@@ -136,6 +136,9 @@ public final class ValidationPipeline: @unchecked Sendable {
             }
         }
         let apiVersion = object["apiVersion"] as? Int ?? 1
-        return ScriptMeta(title: title, phase: phase, params: params, apiVersion: apiVersion)
+        let prompt = object["prompt"] as? String
+        let icon = object["icon"] as? String
+        return ScriptMeta(title: title, phase: phase, params: params, apiVersion: apiVersion,
+                          prompt: prompt, icon: icon)
     }
 }

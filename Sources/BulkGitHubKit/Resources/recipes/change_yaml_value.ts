@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Change a YAML value under a glob (dry-run update)",
+  title: "Change YAML value under path glob",
   phase: "update",
   apiVersion: 1,
+  prompt: "change the value of \"RetentionInDays\" from \"14\" to \"30\" wherever it appears in yaml files (extensions yml, yaml, template) under deploy/**",
+  icon: "arrow.triangle.2.circlepath",
   params: {
     glob: "deploy/**",
     extensions: "yml,yaml,template",

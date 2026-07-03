@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Find repos where a YAML file under a glob sets a key to a value",
+  title: "Find YAML key/value under path glob",
   phase: "check",
   apiVersion: 1,
+  prompt: "repos where a yaml file (extensions yml, yaml, template) under deploy/** sets the key \"RetentionInDays\" to \"14\" at any nesting depth",
+  icon: "text.magnifyingglass",
   params: {
     glob: "deploy/**",
     extensions: "yml,yaml,template",

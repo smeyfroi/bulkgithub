@@ -2,6 +2,8 @@ const meta: ScriptMeta = {
   title: "Find repos by custom property",
   phase: "check",
   apiVersion: 1,
+  prompt: "find repos where the custom property \"ProjectType\" is set to \"rails\"",
+  icon: "tag.circle",
   params: {
     property: "ProjectType",
     value: "rails",

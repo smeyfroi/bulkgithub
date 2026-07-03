@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Delete lines containing a string (dry-run update)",
+  title: "Delete lines with string",
   phase: "update",
   apiVersion: 1,
+  prompt: "delete the line containing `legacy-deploy-key-2019` from files in deploy/",
+  icon: "text.badge.minus",
   params: {
     glob: "deploy/**",
     needle: "legacy-deploy-key-2019",

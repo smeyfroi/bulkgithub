@@ -1,7 +1,9 @@
-const meta = {
-  title: "Cancel job: close PRs, delete branches",
-  phase: "merge" as const,
+const meta: ScriptMeta = {
+  title: "Cancel job",
+  phase: "merge",
   apiVersion: 1,
+  prompt: "cancel this job: close its open pull requests without merging and delete its branches",
+  icon: "xmark.circle",
   params: {},
 };
 

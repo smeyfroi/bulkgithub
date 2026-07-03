@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Find repos where a YAML/JSON file sets a key to a value",
+  title: "Find YAML key/value",
   phase: "check",
   apiVersion: 1,
+  prompt: "find repos that contain \"project.json\" where the \"type\" value is \"rails\"",
+  icon: "doc.text.magnifyingglass",
   params: {
     path: "project.json",
     key: "type",

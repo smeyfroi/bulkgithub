@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Append a section to a file (dry-run update)",
+  title: "Add section to file",
   phase: "update",
   apiVersion: 1,
+  prompt: "add a \"# License\" section with body \"TBD\" to README.md",
+  icon: "text.append",
   params: {
     path: "README.md",
     heading: "# License",

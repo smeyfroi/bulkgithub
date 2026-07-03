@@ -191,6 +191,11 @@ interface ScriptMeta {
   phase: "check" | "update" | "merge";
   params?: Record<string, string>;
   apiVersion?: number;
+  /** One-line natural-language description — the prompt that would generate
+   *  this recipe. Shown in the recipe library. */
+  prompt?: string;
+  /** SF Symbol name for the recipe-library icon (e.g. "magnifyingglass"). */
+  icon?: string;
 }
 
 declare const gh: GitHub;

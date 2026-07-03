@@ -1,7 +1,9 @@
-const meta = {
+const meta: ScriptMeta = {
   title: "Change PR body",
-  phase: "merge" as const,
+  phase: "merge",
   apiVersion: 1,
+  prompt: "replace the description of every pull request this job created with the text in the body parameter",
+  icon: "square.and.pencil",
   params: {
     body: "Updated by BulkGitHub.",
   },

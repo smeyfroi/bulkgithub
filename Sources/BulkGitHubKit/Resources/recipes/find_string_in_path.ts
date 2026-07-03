@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Find repos where files under a path contain a string",
+  title: "Find string under path",
   phase: "check",
   apiVersion: 1,
+  prompt: "repos where a file in deploy/ contains the string `legacy-deploy-key-2019`",
+  icon: "magnifyingglass",
   params: {
     glob: "deploy/**",
     needle: "legacy-deploy-key-2019",
