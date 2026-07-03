@@ -823,7 +823,7 @@ final class AppModel {
         let title = recipeNameDraft.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty, !scriptText.isEmpty else { return }
         do {
-            try recipeStore.save(title: title, prompt: prompt, source: scriptText)
+            try recipeStore.save(title: title, prompt: prompt, source: scriptText, using: typescript)
             statusLine = "Saved recipe \"\(title)\""
             reloadCatalog()
         } catch {
@@ -835,7 +835,7 @@ final class AppModel {
         let title = recipeNameDraft.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty, title != recipe.title else { return }
         do {
-            try recipeStore.rename(id: recipe.id, to: title)
+            try recipeStore.rename(id: recipe.id, to: title, using: typescript)
             statusLine = "Renamed recipe to \"\(title)\""
             reloadCatalog()
         } catch {
@@ -885,8 +885,15 @@ final class AppModel {
     /// Build the bundled catalog off the main actor (transpile + meta read per
     /// file), then publish it. On a fresh launch (no restored job) load the
     /// golden recipe into the editor once the catalog is ready.
+    /// Monotonic token so overlapping catalog builds resolve last-issued-wins:
+    /// a fast reload (after a save/delete) must never be overwritten by a slower
+    /// build (e.g. the cold launch load) that was issued earlier.
+    @ObservationIgnored private var recipeCatalogGeneration = 0
+
     private func loadRecipeCatalog(loadGoldenWhenReady: Bool) {
         recipesLoading = true
+        recipeCatalogGeneration += 1
+        let generation = recipeCatalogGeneration
         let loader = recipeLoader
         let store = recipeStore
         let service = typescript
@@ -896,8 +903,9 @@ final class AppModel {
                 return loader.load()
             }.value
             guard let self else { return }
-            self.recipes = loaded
             self.recipesLoading = false
+            guard self.recipeCatalogGeneration == generation else { return }
+            self.recipes = loaded
             if loadGoldenWhenReady, self.scriptText.isEmpty, !self.running, !self.generating {
                 self.loadGoldenRecipe()
             }
@@ -905,12 +913,16 @@ final class AppModel {
     }
 
     /// Rebuild the catalog off the main actor (mtime-cached, so only changed
-    /// files re-parse) after a save/rename/delete/import.
+    /// files re-parse) after a save/rename/delete/import. Guarded by the
+    /// generation token so it wins over any in-flight earlier build.
     private func reloadCatalog() {
+        recipeCatalogGeneration += 1
+        let generation = recipeCatalogGeneration
         let loader = recipeLoader
         Task { [weak self] in
             let loaded = await Task.detached(priority: .userInitiated) { loader.load() }.value
-            self?.recipes = loaded
+            guard let self, self.recipeCatalogGeneration == generation else { return }
+            self.recipes = loaded
         }
     }
 
