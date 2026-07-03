@@ -173,7 +173,7 @@ enum HostBindings {
                                                ref: stringArg(element?.forProperty("ref"))))
             }
             let batch = requests   // immutable snapshot for the concurrent closure
-            return hostPromise(limiter: limiter, cancel: cancel, vmQueue: vmQueue) {
+            return hostPromise(limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue) {
                 let texts = try await github.getContentBatch(batch)
                 var present = 0
                 for (request, text) in zip(batch, texts) where text != nil {
