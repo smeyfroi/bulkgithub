@@ -53,6 +53,12 @@ public enum ResourceLocator {
         }
     }
 
+    /// The bundled recipes directory (Resources/recipes), or nil if the
+    /// resource bundle can't be located.
+    public static var recipesDirectory: URL? {
+        resourcesRoot?.appendingPathComponent("recipes", isDirectory: true)
+    }
+
     /// A bundled recipe by file name (without extension).
     public static func recipe(named name: String) -> String? {
         string(at: "recipes/\(name).ts")

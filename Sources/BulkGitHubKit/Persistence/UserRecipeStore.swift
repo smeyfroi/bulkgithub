@@ -23,7 +23,7 @@ public struct UserRecipe: Codable, Identifiable, Sendable, Equatable {
 
     public var asRecipe: Recipe {
         Recipe(id: id, title: title, prompt: prompt, phase: phase,
-               systemImage: "bookmark", source: source)
+               systemImage: "bookmark", origin: .user, source: source)
     }
 }
 
