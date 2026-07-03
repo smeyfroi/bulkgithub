@@ -1,6 +1,33 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import BulkGitHubKit
+
+/// Recipe interchange via plain-text file panels. A recipe is a `.ts` file, so
+/// importing is "copy a file in" (after validation) and exporting is "write the
+/// source out" — the same format used for bundled and user recipes alike.
+@MainActor
+func importRecipeViaPanel(_ model: AppModel) {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: "ts") ?? .plainText]
+    panel.allowsMultipleSelection = false
+    panel.message = "Choose a recipe (.ts) to import"
+    panel.prompt = "Import"
+    if panel.runModal() == .OK, let url = panel.url {
+        model.importRecipe(from: url)
+    }
+}
+
+@MainActor
+func exportRecipeViaPanel(_ recipe: Recipe, _ model: AppModel) {
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: "ts") ?? .plainText]
+    panel.nameFieldStringValue = "\(recipe.id).ts"
+    panel.prompt = "Export"
+    if panel.runModal() == .OK, let url = panel.url {
+        model.exportRecipe(recipe, to: url)
+    }
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var onTerminate: (() -> Void)?
@@ -67,6 +94,8 @@ struct BulkGitHubApp: App {
                 Button("Save Script as Recipe…") { model.requestSaveRecipe() }
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(model.running || model.generating || model.scriptText.isEmpty)
+                Button("Import Recipe…") { importRecipeViaPanel(model) }
+                    .disabled(model.running || model.generating)
             }
             // The flow bar's menu home (every control needs one): phase
             // switching from the View menu, Mail/Finder-style.

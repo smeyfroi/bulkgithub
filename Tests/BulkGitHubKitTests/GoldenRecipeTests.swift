@@ -267,34 +267,40 @@ struct SupportTests {
         #expect(loaded.job?.auditEvents.count == 1)
     }
 
-    @Test("user recipes save, rename, and delete through the store")
+    @Test("user recipes save, rename, and delete as .ts through the store")
     func userRecipes() throws {
+        let service = try #require(TypeScriptService.loadDefault())
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("bulkgh-recipes-\(UUID().uuidString)")
         let store = UserRecipeStore(directory: directory)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let recipe = UserRecipe(title: "Find stale configs",
-                                prompt: "find configs that are stale",
-                                phase: .check,
-                                source: "async function main() {}")
-        try store.save(recipe)
-        var loaded = store.load()
-        #expect(loaded.map(\.id) == [recipe.id])
-        #expect(loaded.first?.asRecipe.source == "async function main() {}")
-        #expect(loaded.first?.asRecipe.phase == .check)
+        func load() -> [Recipe] {
+            RecipeCatalogLoader(service: service, bundledDirectory: nil, userDirectory: directory).load()
+        }
+        let source = """
+        const meta: ScriptMeta = { title: "generated", phase: "check", apiVersion: 1 };
+        async function main(): Promise<void> {}
+        """
+        let id = try store.save(title: "Find stale configs",
+                                prompt: "find configs that are stale", source: source)
 
-        var renamed = recipe
-        renamed.title = "Audit configs"
-        try store.save(renamed)
-        loaded = store.load()
+        var loaded = load()
+        #expect(loaded.map(\.id) == [id])
+        #expect(loaded.first?.title == "Find stale configs")
+        #expect(loaded.first?.prompt == "find configs that are stale")
+        #expect(loaded.first?.phase == .check)
+        #expect(loaded.first?.origin == .user)
+
+        try store.rename(id: id, to: "Audit configs")
+        loaded = load()
         #expect(loaded.count == 1)
         #expect(loaded.first?.title == "Audit configs")
 
-        try store.delete(id: recipe.id)
-        #expect(store.load().isEmpty)
+        try store.delete(id: id)
+        #expect(load().isEmpty)
         // Deleting a missing recipe is a no-op, not an error.
-        try store.delete(id: recipe.id)
+        try store.delete(id: id)
     }
 
     @Test("mock LLM patches recipe params from the prompt")

@@ -399,7 +399,7 @@ struct SidebarView: View {
                         .selectionDisabled()
                 }
                 ForEach(JobPhase.allCases, id: \.self) { phase in
-                    let bundled = model.recipes.filter { $0.phase == phase }
+                    let bundled = model.recipes.filter { $0.phase == phase && $0.origin == .bundled }
                     let saved = model.userRecipes.filter { $0.phase == phase }
                     if !bundled.isEmpty || !saved.isEmpty {
                         DisclosureGroup(isExpanded: expansionBinding(for: phase)) {
@@ -414,10 +414,13 @@ struct SidebarView: View {
                                 .disabled(busy)
                                 .selectionDisabled()
                                 .help(recipe.prompt)
+                                .contextMenu {
+                                    Button("Export…") { exportRecipeViaPanel(recipe, model) }
+                                }
                             }
                             ForEach(saved) { recipe in
                                 Button {
-                                    model.loadRecipe(recipe.asRecipe)
+                                    model.loadRecipe(recipe)
                                 } label: {
                                     Label(recipe.title, systemImage: "bookmark")
                                         .font(.callout)
@@ -431,6 +434,8 @@ struct SidebarView: View {
                                         model.recipeNameDraft = recipe.title
                                         model.renamingRecipe = recipe
                                     }
+                                    Button("Export…") { exportRecipeViaPanel(recipe, model) }
+                                    Divider()
                                     Button("Delete…", role: .destructive) {
                                         model.deletingRecipe = recipe
                                     }

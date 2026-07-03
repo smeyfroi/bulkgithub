@@ -55,4 +55,34 @@ struct RecipeCatalogLoaderTests {
             _ = try ValidationPipeline.extractMeta(fromJavaScript: javaScript)
         }
     }
+
+    @Test("legacy JSON user recipes migrate to .ts and the JSON is retired")
+    func legacyJSONMigration() throws {
+        let service = try #require(Self.service)
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulkgh-migrate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // A user recipe in the pre-.ts JSON format (title differs from the
+        // script's own meta.title, as real saves do).
+        let json = """
+        {"id":"abc123","title":"Legacy recipe","prompt":"do the legacy thing",\
+        "phase":"check","source":"const meta = { title: \\"gen\\", phase: \\"check\\" };\
+        \\nasync function main() {}","createdAt":"2026-01-01T00:00:00Z"}
+        """
+        try Data(json.utf8).write(to: dir.appendingPathComponent("abc123.json"))
+
+        UserRecipeStore(directory: dir).migrateLegacyJSON(using: service)
+
+        // JSON retired (renamed, not deleted); a .ts now carries the recipe with
+        // the user's chosen title + prompt.
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("abc123.json").path))
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("abc123.json.migrated").path))
+        let recipes = RecipeCatalogLoader(service: service, bundledDirectory: nil, userDirectory: dir).load()
+        #expect(recipes.count == 1)
+        #expect(recipes.first?.title == "Legacy recipe")
+        #expect(recipes.first?.prompt == "do the legacy thing")
+        #expect(recipes.first?.origin == .user)
+    }
 }
