@@ -283,7 +283,7 @@ struct SupportTests {
         async function main(): Promise<void> {}
         """
         let id = try store.save(title: "Find stale configs",
-                                prompt: "find configs that are stale", source: source)
+                                prompt: "find configs that are stale", source: source, using: service)
 
         var loaded = load()
         #expect(loaded.map(\.id) == [id])
@@ -292,7 +292,7 @@ struct SupportTests {
         #expect(loaded.first?.phase == .check)
         #expect(loaded.first?.origin == .user)
 
-        try store.rename(id: id, to: "Audit configs")
+        try store.rename(id: id, to: "Audit configs", using: service)
         loaded = load()
         #expect(loaded.count == 1)
         #expect(loaded.first?.title == "Audit configs")

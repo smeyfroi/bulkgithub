@@ -11,14 +11,34 @@ private struct LegacyUserRecipe: Codable {
     var createdAt: Date
 }
 
+public enum RecipeStoreError: LocalizedError {
+    case compilerUnavailable
+    case invalidRecipe
+    case roundTripFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .compilerUnavailable:
+            return "The recipe compiler is unavailable."
+        case .invalidRecipe:
+            return "This isn't a valid recipe — it needs a meta block and an async function main()."
+        case .roundTripFailed:
+            return "Could not write a self-describing recipe file."
+        }
+    }
+}
+
 /// Writes user recipes as self-describing `.ts` files in
 /// Application Support/BulkGitHub/recipes — the SAME format as bundled recipes,
 /// so they load through the one `RecipeCatalogLoader` and interchange as plain
 /// files. This type is the writer (save / rename / delete / import) plus the
 /// one-time JSON→`.ts` migration; reading is the loader's job over `directory`.
 ///
-/// Filenames (and hence recipe ids) are unique `user-<uuid>` stems, so a saved
-/// or imported recipe never silently shadows a bundled recipe of the same name.
+/// Save/rename regenerate the file's `meta` from its parsed values (title/prompt
+/// overridden) and VERIFY the result round-trips before returning — so an
+/// invalid script throws instead of writing a file that silently vanishes from
+/// the catalog. Filenames (and recipe ids) are unique `user-<uuid>` stems, so a
+/// saved or imported recipe never shadows a bundled recipe of the same name.
 public final class UserRecipeStore: @unchecked Sendable {
     public let directory: URL
 
@@ -31,22 +51,25 @@ public final class UserRecipeStore: @unchecked Sendable {
         self.directory = base
     }
 
-    /// Persist `source` as a user recipe under the given display name + prompt
-    /// (written into the file's `meta`, so the `.ts` is self-describing).
-    /// Returns the new recipe id (filename stem).
+    /// Persist `source` as a user recipe under the given display name + prompt.
+    /// Throws (RecipeStoreError / validation error) if `source` isn't a valid
+    /// recipe or the rewritten file doesn't round-trip. Returns the new id.
     @discardableResult
-    public func save(title: String, prompt: String, source: String) throws -> String {
+    public func save(title: String, prompt: String, source: String,
+                     using service: TypeScriptService?) throws -> String {
+        guard let service else { throw RecipeStoreError.compilerUnavailable }
+        let ts = try Self.rewrite(source: source, title: title, prompt: prompt, using: service)
         let id = Self.freshId()
-        let ts = RecipeMetaWriter.applying(title: title, prompt: prompt, to: source) ?? source
         try write(ts, id: id)
         return id
     }
 
-    /// Rewrite an existing user recipe's display name (`meta.title`) in place.
-    public func rename(id: String, to newTitle: String) throws {
-        let url = fileURL(id)
-        let source = try String(contentsOf: url, encoding: .utf8)
-        try write(RecipeMetaWriter.setField("title", to: newTitle, in: source) ?? source, id: id)
+    /// Rewrite an existing user recipe's display name (keeping its prompt).
+    public func rename(id: String, to newTitle: String, using service: TypeScriptService?) throws {
+        guard let service else { throw RecipeStoreError.compilerUnavailable }
+        let source = try String(contentsOf: fileURL(id), encoding: .utf8)
+        let ts = try Self.rewrite(source: source, title: newTitle, prompt: nil, using: service)
+        try write(ts, id: id)
     }
 
     public func delete(id: String) throws {
@@ -65,6 +88,32 @@ public final class UserRecipeStore: @unchecked Sendable {
         return id
     }
 
+    /// Regenerate `source`'s meta with the given title (and prompt, or the
+    /// source's existing prompt when `prompt` is nil), verify the result loads
+    /// back with the intended values, and return the new `.ts`. Throws on any
+    /// failure so callers never persist a silently-broken recipe.
+    private static func rewrite(source: String, title: String, prompt: String?,
+                                using service: TypeScriptService) throws -> String {
+        let meta: ScriptMeta
+        do { meta = try metaOf(source, using: service) } catch { throw RecipeStoreError.invalidRecipe }
+        let finalPrompt = prompt ?? meta.prompt
+        guard let ts = RecipeMetaWriter.replacingMeta(
+            in: source, title: title, phase: meta.phase, apiVersion: meta.apiVersion,
+            prompt: finalPrompt, icon: meta.icon, params: meta.params) else {
+            throw RecipeStoreError.invalidRecipe
+        }
+        let check: ScriptMeta
+        do { check = try metaOf(ts, using: service) } catch { throw RecipeStoreError.roundTripFailed }
+        guard check.title == title, (check.prompt ?? "") == (finalPrompt ?? "") else {
+            throw RecipeStoreError.roundTripFailed
+        }
+        return ts
+    }
+
+    private static func metaOf(_ source: String, using service: TypeScriptService) throws -> ScriptMeta {
+        try ValidationPipeline.extractMeta(fromJavaScript: try service.transpile(source: source))
+    }
+
     private func write(_ source: String, id: String) throws {
         try Data(source.utf8).write(to: fileURL(id), options: .atomic)
     }
@@ -80,12 +129,12 @@ public final class UserRecipeStore: @unchecked Sendable {
     // MARK: Migration
 
     /// One-time, non-destructive migration of legacy JSON user recipes to `.ts`:
-    /// write the `.ts`, verify (via `service`) it loads back with the expected
-    /// title, and only THEN retire the `.json` (renamed to `.json.migrated`, not
-    /// deleted). A file that fails to migrate is left as JSON, untouched — so no
-    /// recipe is ever lost mid-migration. Idempotent: rerunning finds no `.json`.
+    /// regenerate a self-describing `.ts` (verified to round-trip inside
+    /// `rewrite`), then retire the `.json` (renamed to `.json.migrated`, not
+    /// deleted). A file that can't form a valid recipe is left as JSON, so no
+    /// recipe is lost. Idempotent: rerunning finds no `.json`.
     public func migrateLegacyJSON(using service: TypeScriptService?) {
-        guard let files = try? FileManager.default.contentsOfDirectory(
+        guard let service, let files = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -93,29 +142,17 @@ public final class UserRecipeStore: @unchecked Sendable {
             guard let data = try? Data(contentsOf: json),
                   let legacy = try? decoder.decode(LegacyUserRecipe.self, from: data) else { continue }
             let id = legacy.id.hasPrefix("user-") ? legacy.id : "user-\(legacy.id)"
-            let ts = RecipeMetaWriter.applying(title: legacy.title, prompt: legacy.prompt,
-                                               to: legacy.source) ?? legacy.source
+            let ts: String
             do {
+                ts = try Self.rewrite(source: legacy.source, title: legacy.title,
+                                      prompt: legacy.prompt, using: service)
                 try write(ts, id: id)
             } catch {
-                continue   // couldn't write the .ts — leave the JSON in place
+                continue   // can't form a valid .ts — leave the JSON untouched
             }
-            if extractedTitle(ts, using: service) == legacy.title {
-                let backup = json.appendingPathExtension("migrated")
-                try? FileManager.default.removeItem(at: backup)
-                try? FileManager.default.moveItem(at: json, to: backup)
-            } else {
-                // The .ts didn't round-trip; don't leave a broken file behind,
-                // and keep the JSON as the source of truth for a later retry.
-                try? FileManager.default.removeItem(at: fileURL(id))
-            }
+            let backup = json.appendingPathExtension("migrated")
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.moveItem(at: json, to: backup)
         }
-    }
-
-    private func extractedTitle(_ ts: String, using service: TypeScriptService?) -> String? {
-        guard let service,
-              let javaScript = try? service.transpile(source: ts),
-              let meta = try? ValidationPipeline.extractMeta(fromJavaScript: javaScript) else { return nil }
-        return meta.title
     }
 }
