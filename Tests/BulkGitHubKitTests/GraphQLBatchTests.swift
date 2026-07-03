@@ -84,4 +84,36 @@ struct GraphQLBatchTests {
         #expect(results.isEmpty)
         #expect(GraphQLStubProtocol.requestCount == 0)
     }
+
+    @Test("a missing file resolves to nil without disturbing the other repos")
+    func missingFileIsIsolated() async throws {
+        // A file that doesn't exist is `object: null` — not even a GraphQL error.
+        GraphQLStubProtocol.reset(body: #"""
+        {"data":{"r0":{"object":{"text":"present"}},"r1":{"object":null},"r2":{"object":{"text":"also"}}}}
+        """#)
+        let results = try await client().getContentBatch([
+            ContentRequest(repo: "o/has", path: "wanted"),
+            ContentRequest(repo: "o/lacks", path: "wanted"),
+            ContentRequest(repo: "o/has2", path: "wanted"),
+        ])
+        #expect(results == ["present", nil, "also"])
+    }
+
+    @Test("a per-repo NOT_FOUND (non-fatal errors array) does not fail the whole batch")
+    func perRepoErrorIsIsolated() async throws {
+        // A missing/private/renamed repo yields a null alias AND a top-level
+        // `errors` entry — but `data` is still present, so the batch must return
+        // the repos it could resolve rather than throwing across all of them.
+        GraphQLStubProtocol.reset(body: #"""
+        {"data":{"r0":{"object":{"text":"alpha"}},"r1":null,"r2":{"object":{"text":"gamma"}}},
+         "errors":[{"type":"NOT_FOUND","path":["r1"],"message":"Could not resolve to a Repository with the name 'o/gone'."}]}
+        """#)
+        let results = try await client().getContentBatch([
+            ContentRequest(repo: "o/a", path: "f"),
+            ContentRequest(repo: "o/gone", path: "f"),
+            ContentRequest(repo: "o/c", path: "f"),
+        ])
+        #expect(results == ["alpha", nil, "gamma"])
+        #expect(GraphQLStubProtocol.requestCount == 1)
+    }
 }
