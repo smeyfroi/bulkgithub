@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Set a custom property from a JSON file value",
+  title: "Set custom property from JSON value",
   phase: "update",
   apiVersion: 1,
+  prompt: "for all repos that contain project.json, set the custom property \"ProjectType\" to the value of the \"type\" key in the project.json",
+  icon: "tag",
   params: {
     file: "project.json",
     jsonKey: "type",

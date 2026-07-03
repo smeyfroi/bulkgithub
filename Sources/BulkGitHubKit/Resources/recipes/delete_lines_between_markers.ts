@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Delete lines between markers (dry-run update)",
+  title: "Delete lines between marker text",
   phase: "update",
   apiVersion: 1,
+  prompt: "delete the lines from a marker \"# >>>\" to the next marker \"# <<<\" in files under deploy/*.template",
+  icon: "pencil.slash",
   params: {
     glob: "deploy/*.template",
     startMarker: "# >>>",

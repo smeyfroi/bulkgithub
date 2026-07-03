@@ -320,13 +320,23 @@ public struct ScriptMeta: Sendable, Equatable {
     public var phase: JobPhase
     public var params: [String: String]
     public var apiVersion: Int
+    /// One-line natural-language description (the prompt that would generate
+    /// this recipe). Optional so existing/in-flight scripts stay valid; the
+    /// recipe catalog uses it as the library subtitle.
+    public var prompt: String?
+    /// SF Symbol name for the recipe-library icon. Optional; the loader
+    /// supplies a per-phase default when absent.
+    public var icon: String?
 
     public init(title: String = "Untitled", phase: JobPhase = .check,
-                params: [String: String] = [:], apiVersion: Int = 1) {
+                params: [String: String] = [:], apiVersion: Int = 1,
+                prompt: String? = nil, icon: String? = nil) {
         self.title = title
         self.phase = phase
         self.params = params
         self.apiVersion = apiVersion
+        self.prompt = prompt
+        self.icon = icon
     }
 }
 

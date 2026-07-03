@@ -1,7 +1,9 @@
-const meta = {
-  title: "Squash-merge approved job PRs",
-  phase: "merge" as const,
+const meta: ScriptMeta = {
+  title: "Merge approved PRs",
+  phase: "merge",
   apiVersion: 1,
+  prompt: "squash-merge the approved pull requests this job created, then delete their branches",
+  icon: "arrow.triangle.merge",
   params: {},
 };
 

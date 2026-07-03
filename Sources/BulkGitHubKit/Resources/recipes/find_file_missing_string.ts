@@ -1,7 +1,9 @@
 const meta: ScriptMeta = {
-  title: "Find repos whose file is missing a string",
+  title: "Find file missing a string",
   phase: "check",
   apiVersion: 1,
+  prompt: "find repos where the file README.md does not contain \"# License\"",
+  icon: "magnifyingglass.circle",
   params: {
     path: "README.md",
     marker: "# License",
