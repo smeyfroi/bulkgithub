@@ -130,11 +130,21 @@ public extension GitHubClient {
     /// Serial fallback for conformers without a batched implementation (e.g. the
     /// fixture client): read each file in turn. The live client overrides this
     /// with a single GraphQL round-trip per chunk.
+    ///
+    /// Per-entry isolation mirrors the GraphQL path: a file/repo that is missing
+    /// OR errors resolves to nil for that entry alone, so one bad repo never
+    /// fails the whole batch. Cancellation still propagates.
     func getContentBatch(_ requests: [ContentRequest]) async throws -> [String?] {
         var results: [String?] = []
         results.reserveCapacity(requests.count)
         for request in requests {
-            results.append(try await getContent(repo: request.repo, path: request.path, ref: request.ref))
+            do {
+                results.append(try await getContent(repo: request.repo, path: request.path, ref: request.ref))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                results.append(nil)   // isolate a per-repo failure, like the GraphQL path
+            }
         }
         return results
     }

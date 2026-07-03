@@ -99,6 +99,23 @@ interface GitHub {
   getContent(repo: Repo | string, path: string, ref?: string): Promise<string | null>;
 
   /**
+   * Batched getContent: fetch many files in ONE request (via GraphQL, drawing
+   * on a quota pool SEPARATE from the REST budget). Pass a { repo, path } per
+   * file; resolves to an array aligned with the input, null where a repo/file
+   * is missing (or the blob is binary). STRONGLY prefer this to a
+   * getContent-per-repo loop when scanning many repos — it turns N requests
+   * into roughly N/100. Gather the (repo, path) pairs first, then one call.
+   *
+   * Per-entry isolation: a missing file/repo yields null for THAT entry only;
+   * the rest resolve normally. The flip side is you can't distinguish "absent"
+   * from "fetch failed" per repo (both are null) — a batched scan trades that
+   * granularity for far fewer requests, so it has no per-repo try/catch.
+   */
+  getContentBatch(
+    requests: { repo: Repo | string; path: string; ref?: string }[]
+  ): Promise<(string | null)[]>;
+
+  /**
    * File paths in the repository tree at ref (default branch HEAD when ref is
    * omitted), optionally filtered by a glob: `*` matches within one path
    * segment, `**` spans path segments (prefix a pattern with two asterisks
