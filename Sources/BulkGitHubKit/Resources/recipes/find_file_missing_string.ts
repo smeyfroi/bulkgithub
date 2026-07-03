@@ -19,32 +19,34 @@ async function main(): Promise<void> {
   const repos = await gh.listOrgRepos();
   job.progress(`checking ${repos.length} repo(s) for ${path} missing "${marker}"`);
 
+  const active = repos.filter(repo => !repo.archived);
+  for (const repo of repos) if (repo.archived) job.skip(repo, "archived");
+
+  // One batched read instead of a GET per repo: an org-wide scan collapses to
+  // a handful of requests, drawn from a quota pool separate from the REST
+  // budget. A repo whose file is missing (or unreadable) comes back as null and
+  // is skipped — a batch has no per-repo try/catch, so it can't single one out
+  // as failed the way a getContent loop can.
+  const texts = await gh.getContentBatch(active.map(repo => ({ repo, path })));
+
   const found: { repo: string; defaultBranch: string }[] = [];
-  for (const repo of repos) {
-    if (repo.archived) {
-      job.skip(repo, "archived");
-      continue;
+  active.forEach((repo, i) => {
+    const text = texts[i];
+    if (text === null) {
+      job.skip(repo, `${path} absent`);
+      return;
     }
-    try {
-      const text = await gh.getContent(repo, path);
-      if (text === null) {
-        job.skip(repo, `${path} absent`);
-        continue;
-      }
-      if (text.includes(marker)) {
-        job.skip(repo, `already contains "${marker}"`);
-        continue;
-      }
-      job.reportMatch(repo, {
-        path,
-        excerpt: text,
-        explanation: `"${marker}" missing from ${path}`,
-      });
-      found.push({ repo: repo.fullName, defaultBranch: repo.defaultBranch });
-    } catch (e) {
-      job.error(repo, String(e));
+    if (text.includes(marker)) {
+      job.skip(repo, `already contains "${marker}"`);
+      return;
     }
-  }
+    job.reportMatch(repo, {
+      path,
+      excerpt: text,
+      explanation: `"${marker}" missing from ${path}`,
+    });
+    found.push({ repo: repo.fullName, defaultBranch: repo.defaultBranch });
+  });
 
   // Carry the matches so an update script can plan without repeating the scan.
   job.writeState("missingMarker", found);
