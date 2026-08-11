@@ -18,7 +18,9 @@ run it; matches are verified deterministically and shown in situ.
 
 **2 — Update** (dry run by default): the find results carry into the funnel;
 the dry run records a reviewable plan with native diffs. The Dry Run | Write
-toggle arms real writes only after you've reviewed the plan.
+toggle arms real writes only after you've reviewed the plan. Updates can also
+add whole files whose content comes from your Mac, attached in the app —
+see [Adding files from your Mac](#adding-files-from-your-mac).
 
 ![Update phase: the find → update funnel, with the planned branch/edit/PR actions and native diffs for review](screenshot-update.png)
 
@@ -96,6 +98,35 @@ and delete the branches. Consumed artifacts leave the registry; the Audit
 tab keeps the cumulative trail of everything the job did.
 
 **File > New Job (⌘N)** resets the workspace for the next campaign.
+
+## Adding files from your Mac
+
+An update can create a whole new file in every matched repo — e.g. the prompt
+`add a file aws_ec2.rb to config/initializers/` — with the content coming
+from a file on your Mac, **not** from the model. The generated script
+declares a param whose name ends in `File` (here `contentFile: ""`), and the
+params bar renders it as an **Attached files** row: pick the local file
+(that's the only way in — paths are never typed, and a recipe never carries
+one), and Run stays disabled until every file param is attached.
+
+The script reads the exact bytes with `job.file("contentFile")`, so the
+content is byte-for-byte what's on disk — no LLM round-trip to mangle
+whitespace or YAML indentation. The dry run shows it as an all-added diff
+with a provenance caption naming the attached file, and **Apply writes
+exactly the reviewed bytes**: the dry run snapshots the content, so editing,
+moving, or deleting the local file after review can't change what an armed
+run writes — it just raises the stale banner until you re-run the dry run.
+Attached files must be UTF-8 text up to 2 MB, and files from hidden or
+system locations under your home folder (`~/.ssh`, `~/.aws`, `~/Library`, …)
+are refused outright.
+
+Saved recipes stay one shareable `.ts` file: what travels is the **empty**
+`contentFile` declaration — the requirement, never a path or the bytes. On
+your own Mac the app remembers the last pick per recipe and re-attaches it
+while the file still exists; anyone else's copy arrives blank and asks for a
+pick. The bundled **Add a file from an attached local file** recipe is the
+canonical shape. (Adding a file under `.github/workflows/` additionally
+needs the **Workflows** token permission — see the gotcha below.)
 
 ## Connecting to live GitHub
 
@@ -180,6 +211,14 @@ only the typed host API, and that surface is phase-gated:
   duplicates), and the `bulkgh/` branch-name prefix. A partially-applied repo
   halts safely and is completed by re-running Apply — resume is gated by the
   artifact registry.
+- **Attached files** are the one way local content enters a script: the user
+  picks the file in the app (never a typed or recipe-supplied path — recipes
+  are rejected at validation if a `*File` param carries a default), the host
+  validates it fail-closed (symlink-resolved sensitive-location denylist,
+  strict UTF-8, 2 MB cap) and injects only its *content* via `job.file(key)`.
+  The script still has no filesystem access and never sees the path; armed
+  runs replay the dry-run snapshot rather than re-reading disk, so what you
+  reviewed is exactly what gets written.
 - **Complete** scripts are registry-scoped (`bulkgh.merge.d.ts`): `listJobPRs` /
   `mergePR` / `closePR` / `deleteBranch` can only touch branches and PRs THIS
   job created. Merging additionally requires a per-PR approval that pins the
