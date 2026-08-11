@@ -133,7 +133,8 @@ struct MainView: View {
                                   || model.scriptText.isEmpty || model.validating || model.generating
                                   || (model.writeArmed && !model.canArmWrites)
                                   || (model.writeArmed && model.armTargets.isEmpty)
-                                  || !model.prFieldsComplete)
+                                  || !model.prFieldsComplete
+                                  || !model.fileParamsComplete)
                     }
                 }
             }
@@ -222,6 +223,9 @@ struct MainView: View {
         }
         if !model.prFieldsComplete {
             return "Fill in the PR title and description above — they're required and become the title/body of every PR this job opens"
+        }
+        if !model.fileParamsComplete {
+            return "Attach a file for each file parameter above — the run writes those files' exact content"
         }
         return model.phase == .check
             ? "Validate and run the script (the find phase is read-only)"

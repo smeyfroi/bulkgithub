@@ -49,6 +49,12 @@ public struct EngineConfiguration: Sendable {
     public var prTitleOverride: String?
     public var prBodyOverride: String?
 
+    /// Content of user-attached files, keyed by *File param key — the host
+    /// resolved (dry run) or snapshotted (armed) bytes behind job.file(key).
+    /// Host-authoritative like the PR overrides: the script can only read
+    /// these verbatim; the picked path itself never enters the context.
+    public var resolvedFiles: [String: String] = [:]
+
     public init() {}
 
     public init(settings: AppSettings) {
@@ -163,7 +169,8 @@ public final class ScriptEngine {
                              collector: collector, limiter: limiter, cancel: cancel,
                              quotaGate: quotaGate, vmQueue: vmQueue, writeMode: configuration.writeMode,
                              prTitleOverride: configuration.prTitleOverride,
-                             prBodyOverride: configuration.prBodyOverride)
+                             prBodyOverride: configuration.prBodyOverride,
+                             resolvedFiles: configuration.resolvedFiles)
 
         let modeSuffix = configuration.writeMode == .armed
             ? ", mode: ARMED — writes reach the GitHub client"

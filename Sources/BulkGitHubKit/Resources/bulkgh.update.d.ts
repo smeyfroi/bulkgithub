@@ -19,6 +19,11 @@
  *   first so the plan can show what is being deleted.
  * - One branch per repo, then one putContent/deleteContent per changed file,
  *   then a single createPR.
+ * - A file the USER supplies (an attached local file) enters via job.file(key)
+ *   on a "*File" param — pass it straight to putContent. Skip the prior
+ *   getContent only for a path confirmed absent (the plan shows it all-added);
+ *   overwriting an existing path still requires the fetch so the plan shows a
+ *   real diff and the armed drift guard has the true before-content.
  */
 
 interface GitHub {

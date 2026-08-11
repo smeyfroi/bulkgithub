@@ -17,7 +17,7 @@ struct RecipeCatalogLoaderTests {
         let service = try #require(Self.service, "TypeScript resources missing from bundle")
         let recipes = RecipeCatalogLoader(service: service).load()
 
-        #expect(recipes.count == 13, "expected 13 bundled recipes, got \(recipes.count)")
+        #expect(recipes.count == 14, "expected 14 bundled recipes, got \(recipes.count)")
         #expect(Set(recipes.map(\.id)).count == recipes.count, "recipe ids must be unique")
 
         for recipe in recipes {

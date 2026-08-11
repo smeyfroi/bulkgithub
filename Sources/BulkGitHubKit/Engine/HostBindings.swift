@@ -59,12 +59,13 @@ enum HostBindings {
                         vmQueue: DispatchQueue,
                         writeMode: EngineConfiguration.WriteMode = .dryRun,
                         prTitleOverride: String? = nil,
-                        prBodyOverride: String? = nil) {
+                        prBodyOverride: String? = nil,
+                        resolvedFiles: [String: String] = [:]) {
         installGitHub(in: context, phase: phase, github: github, organisation: organisation,
                       collector: collector, limiter: limiter, cancel: cancel, quotaGate: quotaGate, vmQueue: vmQueue,
                       writeMode: writeMode,
                       prTitleOverride: prTitleOverride, prBodyOverride: prBodyOverride)
-        installJob(in: context, params: params, collector: collector)
+        installJob(in: context, params: params, collector: collector, resolvedFiles: resolvedFiles)
         installParse(in: context)
         installConsole(in: context, collector: collector)
     }
@@ -612,7 +613,10 @@ enum HostBindings {
                                        reason: "script produced different content for \(path) than the reviewed plan — nothing written")
                     throw GitHubClientError.http(409, "plan deviation: content for \(path) differs from the reviewed plan")
                 }
-                let commit = try await github.putContent(repo: fullName, path: path, content: content,
+                // Commit the PLAN's bytes: proven equal to `content` by the
+                // guard above, and the reviewed plan is the authority on what
+                // an armed run writes.
+                let commit = try await github.putContent(repo: fullName, path: path, content: expectedAfter,
                                                          branch: branch, message: message)
                 collector.consumeNextAction(repo: fullName)
                 collector.audit(kind: "write.putContent", repo: fullName,
@@ -1066,7 +1070,8 @@ enum HostBindings {
     // MARK: - job
 
     private static func installJob(in context: JSContext, params: [String: String],
-                                   collector: JobCollector) {
+                                   collector: JobCollector,
+                                   resolvedFiles: [String: String] = [:]) {
         guard let job = JSValue(newObjectIn: context) else { return }
 
         let reportMatch: @convention(block) (JSValue?, JSValue?) -> Void = { repoValue, evidenceValue in
@@ -1167,6 +1172,35 @@ enum HostBindings {
         }
         job.setObject(unsafeBitCast(readState, to: AnyObject.self),
                       forKeyedSubscript: "readState" as NSString)
+
+        // job.file(key): the verbatim content of the user-attached file behind
+        // a *File param. Host-resolved before the run (dry run reads the picked
+        // path; armed replays the dry-run snapshot) — the script never sees the
+        // filesystem or the path, keeping "the host API is the entire world"
+        // literally true. Throws on an unknown key so a renamed param fails
+        // loudly instead of writing an empty file to N repos.
+        let auditedFileKeys = NSMutableSet()   // JS is single-threaded (vmQueue)
+        let file: @convention(block) (JSValue?) -> JSValue = { keyValue in
+            let ctx = JSContext.current()!
+            guard let key = stringArg(keyValue) else {
+                ctx.exception = JSValue(newErrorFromMessage: "job.file: a param key is required", in: ctx)
+                return JSValue(undefinedIn: ctx)
+            }
+            guard let content = resolvedFiles[key] else {
+                ctx.exception = JSValue(newErrorFromMessage:
+                    "job.file(\"\(key)\"): no attached file for this param — declare it in "
+                    + "meta.params with a name ending in \"File\" and an empty default, and pick "
+                    + "the file in the app before running", in: ctx)
+                return JSValue(undefinedIn: ctx)
+            }
+            if !auditedFileKeys.contains(key) {   // once per key, not per repo
+                auditedFileKeys.add(key)
+                collector.audit(kind: "job.file", repo: nil,
+                                detail: "\(key) → \(params[key] ?? "attached file") (\(content.count) chars)")
+            }
+            return JSValue(object: content, in: ctx)
+        }
+        job.setObject(unsafeBitCast(file, to: AnyObject.self), forKeyedSubscript: "file" as NSString)
 
         job.setObject(params, forKeyedSubscript: "params" as NSString)
 

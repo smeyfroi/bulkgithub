@@ -297,6 +297,18 @@ public struct Job: Codable, Identifiable, Sendable {
     /// synthetic "run" event marking each run boundary. `auditEvents` remains
     /// the last run only.
     public var auditTrail: [AuditEvent]?
+    /// The absolute local paths the user picked for *File params, per phase
+    /// (JobPhase rawValue → param key → path). Host-side only: scripts see the
+    /// file's display name in job.params and its content via job.file(key).
+    public var pickedFilesByPhase: [String: [String: String]]?
+    /// Dry-run snapshots of attached files, per phase (JobPhase rawValue →
+    /// param key → snapshot). Armed runs feed these to the script instead of
+    /// re-reading disk, so an approved plan survives local file edits.
+    public var fileSnapshotsByPhase: [String: [String: FileParamSnapshot]]?
+    /// The recipe id this workspace was loaded from (nil for generated or
+    /// hand-written scripts) — keeps the per-recipe file-pick memory tracking
+    /// across relaunches.
+    public var recipeId: String?
 
     public init(prompt: String = "", phase: JobPhase = .check, scriptSource: String = "",
                 params: [String: String] = [:]) {

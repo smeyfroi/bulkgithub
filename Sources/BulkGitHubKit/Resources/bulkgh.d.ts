@@ -190,6 +190,20 @@ interface Job {
   /** Store a value for later phases of this job. */
   writeState(key: string, value: unknown): void;
 
+  /**
+   * The verbatim content of a file the USER attached for a file parameter.
+   * Declare a meta.params key ending in "File" with an empty default
+   * (e.g. params: { workflowFile: "" }) — the app renders a file picker for
+   * it and the host injects the picked file's exact bytes here. The content
+   * never passes through the model, so it is byte-exact.
+   * job.params.workflowFile carries only the file's NAME (safe for commit
+   * messages and logs); THIS call returns the content. Throws when no file
+   * is attached for the key — call it once at the top of main(), outside any
+   * per-repo try/catch, so a wrong key fails the run immediately instead of
+   * erroring every repo.
+   */
+  file(key: string): string;
+
   /** Resolved parameters: meta.params defaults merged with user edits. */
   readonly params: Record<string, string>;
 }

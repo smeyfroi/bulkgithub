@@ -61,6 +61,34 @@ final class AppModel {
     /// validation), so the params bar can mark edited values and offer a
     /// reset back to the script's own default.
     private var declaredParamsByPhase: [JobPhase: [String: String]] = [:]
+    /// Absolute local paths the user picked for *File params, per phase.
+    /// Host-side only: scripts see the file's display name in job.params and
+    /// its content via job.file(key) — never a path. Picks come exclusively
+    /// from the file picker; a value here is never typed and never read from
+    /// a recipe (see filePickMemory for the Option-B prefill).
+    private var pickedFilePaths: [JobPhase: [String: String]] = [:]
+    /// Dry-run snapshots of the attached files, per phase — the exact bytes
+    /// the reviewed plan was built from. Armed runs replay THESE (never
+    /// re-reading disk), so an approved plan survives the local file being
+    /// edited, moved, or deleted after review.
+    private var fileSnapshots: [JobPhase: [String: FileParamSnapshot]] = [:]
+    /// Pick memory (recipe id → param key → absolute path), kept in APP state
+    /// only — recipe .ts files never carry paths, so a shared recipe arrives
+    /// blank by construction. Reopening a recipe on this machine prefills
+    /// its file params, but only when the remembered file still exists and
+    /// still passes the attachment checks.
+    private var filePickMemory: [String: [String: String]] = [:]
+    /// The recipe the current workspace was loaded from — keys filePickMemory.
+    /// nil for generated or hand-written scripts.
+    private var currentRecipeId: String?
+    /// *File params whose local file's content no longer matches the dry-run
+    /// snapshot — advisory staleness for the current phase, refreshed at
+    /// discrete moments (pick, run end, phase switch) so computed vars do no
+    /// disk IO.
+    private(set) var staleFileParamKeys: Set<String> = []
+    /// Per-key pick failures for the current phase (denylist, non-UTF-8,
+    /// oversize), shown inline in the file row. Transient — never persisted.
+    private(set) var filePickErrors: [String: String] = [:]
     var results: [RepoResult] { resultsByPhase[phase] ?? [] }
     var logs: [String] = []
     var auditEvents: [AuditEvent] = []
@@ -111,9 +139,13 @@ final class AppModel {
     /// sticky default. Never persisted.
     var writeArmed = false
     /// Write mode requires something reviewed to apply: a plan from this
-    /// phase's dry run, not invalidated by script edits.
+    /// phase's dry run, not invalidated by script or parameter edits.
+    /// Attached-file drift is deliberately EXCLUDED: an armed run replays the
+    /// reviewed snapshot bytes regardless of the disk file, so file edits are
+    /// an advisory banner ("re-run the dry run if you meant the new content"),
+    /// never an apply blocker — exactly what the FileParamRow caption promises.
     var canArmWrites: Bool {
-        phase != .check && !activePlan.isEmpty && !resultsAreStale
+        phase != .check && !activePlan.isEmpty && !planIsStale
     }
 
     /// Repos eligible for an armed run: those the reviewed plan touches, in a
@@ -198,6 +230,7 @@ final class AppModel {
         var restoredJob = false
         if let snapshot = store.load() {
             settings = snapshot.settings
+            filePickMemory = snapshot.filePickMemory ?? [:]
             if let job = snapshot.job {
                 restoredJob = true
                 phase = job.phase
@@ -233,6 +266,9 @@ final class AppModel {
                 artifacts = job.artifacts ?? []
                 approvals = job.approvals ?? []
                 appliedPlan = job.appliedPlans ?? [:]
+                pickedFilePaths = Self.byPhase(job.pickedFilesByPhase)
+                fileSnapshots = Self.byPhase(job.fileSnapshotsByPhase)
+                currentRecipeId = job.recipeId
                 statusLine = job.lastRunStatus ?? "Restored previous job"
                 // applyTargets isn't persisted; re-derive it from the restored
                 // plan so a reviewed plan is applyable immediately after launch
@@ -296,6 +332,17 @@ final class AppModel {
     /// the results, so the banner is gone the moment Run is pressed.
     var resultsAreStale: Bool { staleReason != nil }
 
+    /// The reviewed plan no longer matches what a run would do: the script or
+    /// its parameters changed. These invalidate arming (canArmWrites) —
+    /// unlike attached-file drift, which is advisory only.
+    private var planIsStale: Bool {
+        guard !generating, !running,
+              !results.isEmpty, let ran = ranScriptByPhase[phase] else { return false }
+        if ran != scriptText { return true }
+        // Restored pre-0.4.5 state has no recorded params: unknown, not stale.
+        return ranParamsByPhase[phase].map { $0 != effectiveParams(for: phase) } ?? false
+    }
+
     /// What changed since the visible results were produced (nil = nothing).
     var staleReason: String? {
         guard !generating, !running,
@@ -303,12 +350,23 @@ final class AppModel {
         let scriptChanged = ran != scriptText
         // Restored pre-0.4.5 state has no recorded params: unknown, not stale.
         let paramsChanged = ranParamsByPhase[phase].map { $0 != effectiveParams(for: phase) } ?? false
-        switch (scriptChanged, paramsChanged) {
-        case (true, true): return "The script and its parameters have changed since these results were produced — Run to refresh."
-        case (true, false): return "The script has changed since these results were produced — Run to refresh."
-        case (false, true): return "The parameters have changed since these results were produced — Run to refresh."
-        case (false, false): return nil
+        // Attached-file content drift vs the dry-run snapshot (advisory —
+        // refreshed at discrete moments, no IO here). An armed run would
+        // still apply the REVIEWED bytes; this banner says "re-review if you
+        // meant the new ones". It never blocks arming — see canArmWrites.
+        let filesChanged = !staleFileParamKeys.isEmpty
+        var changed: [String] = []
+        if scriptChanged { changed.append("script") }
+        if paramsChanged { changed.append("parameters") }
+        if filesChanged { changed.append("attached file's content") }
+        guard !changed.isEmpty else { return nil }
+        let list: String
+        switch changed.count {
+        case 1: list = changed[0]
+        case 2: list = "\(changed[0]) and \(changed[1])"
+        default: list = "\(changed.dropLast().joined(separator: ", ")), and \(changed.last!)"
         }
+        return "The \(list) changed since these results were produced — Run to refresh."
     }
 
     /// The params a run of `runPhase` would receive right now: the editable
@@ -342,6 +400,133 @@ final class AppModel {
     /// script hasn't been validated since it changed).
     func declaredDefault(for key: String) -> String? {
         declaredParamsByPhase[phase]?[key]
+    }
+
+    // MARK: File params (*File keys — user-attached local files)
+
+    /// The current phase's file-param keys (keys ending in "File"), sorted.
+    var fileParamKeys: [String] {
+        FileParams.fileParamKeys(in: paramsDraft)
+    }
+
+    /// Every file param has an attached file — required before a run, exactly
+    /// like the PR fields (the run would otherwise fail closed at resolution).
+    var fileParamsComplete: Bool {
+        fileParamKeys.allSatisfy { pickedFilePaths[phase]?[$0]?.isEmpty == false }
+    }
+
+    /// The picked path for a file param of the current phase (nil = unpicked).
+    func pickedFilePath(for key: String) -> String? {
+        pickedFilePaths[phase]?[key]
+    }
+
+    /// The dry-run snapshot behind a file param of the current phase, if one
+    /// exists — drives the size caption and the review provenance line.
+    func fileSnapshot(for key: String) -> FileParamSnapshot? {
+        fileSnapshots[phase]?[key]
+    }
+
+    /// Attach a local file to a *File param: resolve it now (existence,
+    /// sensitive-location denylist, strict UTF-8, size cap) so a bad pick
+    /// fails at the picker, not at run time. On success the display name
+    /// lands in the params draft (job.params carries the NAME only; content
+    /// flows via job.file at run time) and the pick is remembered for this
+    /// recipe on this machine.
+    func pickFile(for key: String, url: URL) {
+        do {
+            let resolved = try FileParams.resolve(path: url.path)
+            pickedFilePaths[phase, default: [:]][key] = resolved.sourcePath
+            paramsDraft[key] = resolved.displayName
+            filePickErrors[key] = nil
+            // Staleness is RECOMPUTED against the reviewed snapshot, never
+            // just cleared: picking a divergent file (or re-picking one that
+            // changed on disk) must keep the "Apply writes the reviewed
+            // snapshot" advisory armed. The sha is already in hand — no IO.
+            if let snapshot = fileSnapshots[phase]?[key], snapshot.sha256 != resolved.sha256 {
+                staleFileParamKeys.insert(key)
+            } else {
+                staleFileParamKeys.remove(key)
+            }
+            if let recipeId = currentRecipeId {
+                filePickMemory[recipeId, default: [:]][key] = resolved.sourcePath
+            }
+            statusLine = "Attached \(resolved.displayName) (\(ByteCountFormatter.string(fromByteCount: Int64(resolved.byteSize), countStyle: .file))) for \(key)"
+        } catch {
+            filePickErrors[key] = error.localizedDescription
+            statusLine = error.localizedDescription
+        }
+    }
+
+    /// Detach a file param's pick (and forget it for this recipe).
+    func clearPickedFile(for key: String) {
+        pickedFilePaths[phase]?[key] = nil
+        paramsDraft[key] = ""
+        filePickErrors[key] = nil
+        staleFileParamKeys.remove(key)
+        if let recipeId = currentRecipeId {
+            filePickMemory[recipeId]?[key] = nil
+            if filePickMemory[recipeId]?.isEmpty == true {
+                filePickMemory[recipeId] = nil
+            }
+        }
+    }
+
+    /// Re-hash the attached files against their dry-run snapshots and update
+    /// the advisory staleness set. Called at discrete moments (pick, run end,
+    /// phase switch, plan review) — never from computed vars, so rendering
+    /// stays IO-free. A missing file is NOT stale: the reviewed snapshot is
+    /// what an armed run applies.
+    func refreshFileStaleness() {
+        var stale: Set<String> = []
+        for (key, snapshot) in fileSnapshots[phase] ?? [:] {
+            // No current pick → nothing to compare: "stale vs disk" is
+            // meaningless for a detached param, and the reviewed snapshot is
+            // what an armed run applies regardless.
+            guard let path = pickedFilePaths[phase]?[key] else { continue }
+            let url = URL(fileURLWithPath: path)
+            // Stat before reading: never materialise an unexpectedly large
+            // file just to hash it (the cap the resolver enforces anyway).
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+               size > FileParams.maxByteSize {
+                stale.insert(key)
+                continue
+            }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            if FileParams.sha256(of: data) != snapshot.sha256 { stale.insert(key) }
+        }
+        staleFileParamKeys = stale
+    }
+
+    /// Provenance for the review pane: when a planned write's content is
+    /// byte-identical to an attached file's snapshot, name the file — the
+    /// reviewer should know these bytes came from a local file, not the repo.
+    func fileAttachmentLabel(forPlannedContent content: String) -> String? {
+        for (key, snapshot) in fileSnapshots[phase] ?? [:] where snapshot.content == content {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(snapshot.byteSize),
+                                                 countStyle: .file)
+            return "content read from the attached local file \(snapshot.displayName) (\(size)) — param \(key)"
+        }
+        return nil
+    }
+
+    /// Option B prefill on recipe load: re-attach this recipe's remembered
+    /// picks, but only when the file still exists AND still passes the full
+    /// attachment checks — otherwise the param stays blank and the required
+    /// gate asks for a fresh pick.
+    private func applyFilePickMemory(recipeId: String, recipePhase: JobPhase) {
+        // A second recipe load or a phase switch may have superseded this one
+        // while its validation drained — never apply one recipe's memory to
+        // another recipe's params, or to another phase's workspace.
+        guard currentRecipeId == recipeId, phase == recipePhase else { return }
+        let keys = fileParamKeys
+        guard !keys.isEmpty, let memory = filePickMemory[recipeId] else { return }
+        for key in keys {
+            guard pickedFilePaths[phase]?[key] == nil,
+                  let path = memory[key],
+                  let resolved = try? FileParams.resolve(path: path) else { continue }
+            pickedFilePaths[phase, default: [:]][key] = resolved.sourcePath
+            paramsDraft[key] = resolved.displayName
+        }
     }
 
     /// One row of the update table: the check verdict and the update outcome
@@ -541,6 +726,11 @@ final class AppModel {
         auditTrail = []
         writeArmed = false
         applyTargetsByPhase = [:]
+        // Snapshots reviewed against one world must not arm the other; the
+        // PICKS survive (a file choice is world-independent, like scripts).
+        fileSnapshots = [:]
+        staleFileParamKeys = []
+        filePickErrors = [:]
         statusLine = settings.useFixtureGitHub
             ? "Switched to fixture data — workflow state cleared, scripts kept"
             : "Switched to LIVE GitHub — workflow state cleared, scripts kept"
@@ -653,6 +843,14 @@ final class AppModel {
         quotaResetText = nil
         quotaPauseText = nil
         quotaPauseIsHeld = false
+        // Attachments are job state; the per-recipe pick MEMORY survives — it
+        // belongs to the machine, not the job, and is the whole point of
+        // Option B (reopening a recipe re-offers your own last pick).
+        pickedFilePaths = [:]
+        fileSnapshots = [:]
+        filePickErrors = [:]
+        staleFileParamKeys = []
+        currentRecipeId = nil
     }
 
     func clearResults() {
@@ -664,6 +862,9 @@ final class AppModel {
             plannedActionsPhase = nil
             applyTargetsByPhase[phase] = nil
         }
+        // The snapshots belong to the cleared plan; picks survive.
+        fileSnapshots[phase] = nil
+        staleFileParamKeys = []
         selectedRepo = nil
         statusLine = "Results cleared"
     }
@@ -716,6 +917,8 @@ final class AppModel {
         phase = newPhase
         restoreWorkspace()
         writeArmed = false
+        filePickErrors = [:]
+        refreshFileStaleness()
         // Re-default the apply selection for the phase we're entering: a
         // restored/existing plan stays applyable (canary-first in update, all
         // planned in merge), and a phase with no plan resolves to empty.
@@ -762,6 +965,15 @@ final class AppModel {
         paramsDraft = [:]
         paramsByPhase[recipe.phase] = [:]
         declaredParamsByPhase[recipe.phase] = nil
+        // File picks belong to the script too — a replaced script starts
+        // unattached, then the recipe's remembered picks (this machine only)
+        // re-apply after validation IF the files still exist and still pass
+        // the attachment checks.
+        currentRecipeId = recipe.id
+        pickedFilePaths[recipe.phase] = nil
+        fileSnapshots[recipe.phase] = nil
+        filePickErrors = [:]
+        staleFileParamKeys = []
         diagnostics = []
         statusLine = "Loaded \"\(recipe.title)\""
         // Validate right away so the param bar repopulates from the recipe's
@@ -775,6 +987,7 @@ final class AppModel {
                 await Task.yield()
             }
             await self?.validate()
+            self?.applyFilePickMemory(recipeId: recipe.id, recipePhase: recipe.phase)
         }
     }
 
@@ -846,6 +1059,9 @@ final class AppModel {
     func deleteRecipe(_ recipe: Recipe) {
         do {
             try recipeStore.delete(id: recipe.id)
+            // Its pick memory dies with it — never record under a dead id.
+            filePickMemory[recipe.id] = nil
+            if currentRecipeId == recipe.id { currentRecipeId = nil }
             statusLine = "Deleted recipe \"\(recipe.title)\""
             reloadCatalog()
         } catch {
@@ -1051,6 +1267,13 @@ final class AppModel {
                     // wrote (e.g. values it patched in from the prompt).
                     paramsDraft = [:]
                     declaredParamsByPhase[phase] = nil
+                    // A generated script is not a recipe: no pick memory, and
+                    // any previous script's attachments don't carry over.
+                    currentRecipeId = nil
+                    pickedFilePaths[phase] = nil
+                    fileSnapshots[phase] = nil
+                    filePickErrors = [:]
+                    staleFileParamKeys = []
                     statusLine = "Script generated — review before running"
                     generating = false
                     await validate()
@@ -1132,8 +1355,23 @@ final class AppModel {
             // A script declaring a different phase moves there WITH the
             // current buffer (no workspace swap): the script, prompt, and
             // params on screen belong to the declared phase now.
+            let phaseChanged = validated.meta.phase != phase
             phase = validated.meta.phase
             declaredParamsByPhase[validated.meta.phase] = validated.meta.params
+            // File-param state follows the DECLARED keys: a renamed or
+            // removed *File param must not leave a ghost pick/snapshot that
+            // poisons the staleness banner or the persisted job.
+            let declaredFileKeys = Set(FileParams.fileParamKeys(in: validated.meta.params))
+            pickedFilePaths[phase] = pickedFilePaths[phase]?.filter { declaredFileKeys.contains($0.key) }
+            fileSnapshots[phase] = fileSnapshots[phase]?.filter { declaredFileKeys.contains($0.key) }
+            filePickErrors = filePickErrors.filter { declaredFileKeys.contains($0.key) }
+            if phaseChanged {
+                // Mirror setPhase's housekeeping — the direct phase move
+                // otherwise carries another phase's staleness set across.
+                refreshFileStaleness()
+            } else {
+                staleFileParamKeys.formIntersection(declaredFileKeys)
+            }
             // Two-way sync with the explicit PR title/description fields: an
             // explicit value wins; otherwise the script's generated one shows.
             if !prTitle.isEmpty {
@@ -1224,6 +1462,49 @@ final class AppModel {
         }
         let runPhase = validated.meta.phase
         let runScript = scriptText
+        var params = effectiveParams(for: runPhase)
+        // Attached files, resolved host-side and fail-closed BEFORE any state
+        // is touched — a refused run must leave the job exactly as it was
+        // (the same invariant a validation failure keeps), so this runs ahead
+        // of every wipe below. Dry runs read the picked path fresh; armed
+        // runs replay the reviewed snapshot and never touch disk, so an
+        // approved plan is appliable even after the local file is edited,
+        // moved, or deleted. job.params carries only the display name; bytes
+        // ride configuration.resolvedFiles behind job.file(key).
+        var resolvedFiles: [String: String] = [:]
+        var freshSnapshots: [String: FileParamSnapshot] = [:]
+        let fileKeys = FileParams.fileParamKeys(in: params)
+        for key in fileKeys {
+            if writeMode == .armed {
+                guard let snapshot = fileSnapshots[runPhase]?[key] else {
+                    statusLine = "Cannot apply: no reviewed dry-run snapshot for \(key) — run a dry run first"
+                    return
+                }
+                resolvedFiles[key] = snapshot.content
+                params[key] = snapshot.displayName
+            } else {
+                guard let path = pickedFilePaths[runPhase]?[key], !path.isEmpty else {
+                    statusLine = "Attach a file for \(key) before running"
+                    return
+                }
+                do {
+                    let resolved = try FileParams.resolve(path: path)
+                    resolvedFiles[key] = resolved.content
+                    params[key] = resolved.displayName
+                    freshSnapshots[key] = FileParamSnapshot(resolved: resolved)
+                } catch {
+                    statusLine = error.localizedDescription
+                    filePickErrors[key] = error.localizedDescription
+                    return
+                }
+            }
+        }
+        // Every file resolved — the run WILL start. Commit the snapshots
+        // atomically (never a partial overwrite from an aborted loop).
+        for (key, snapshot) in freshSnapshots {
+            fileSnapshots[runPhase, default: [:]][key] = snapshot
+        }
+        if !fileKeys.isEmpty { staleFileParamKeys.subtract(fileKeys) }
         // A fresh check starts a fresh funnel: the canary, the update
         // results, and the dry-run plan were all derived from the check
         // results this run replaces — carrying them forward made the update
@@ -1238,6 +1519,10 @@ final class AppModel {
             ranParamsByPhase[.update] = nil
             plannedActions = [:]
             plannedActionsPhase = nil
+            // The update plan those snapshots were reviewed with is gone; the
+            // PICKS survive (the user's file choice), the snapshots re-form on
+            // the next update dry run.
+            fileSnapshots[.update] = nil
         }
         runGeneration += 1
         let generation = runGeneration
@@ -1251,8 +1536,8 @@ final class AppModel {
             plannedActionsPhase = nil
         }
         statusLine = writeMode == .armed ? "ARMED — applying the reviewed plan…" : "Running…"
-        let params = effectiveParams(for: runPhase)
         var configuration = EngineConfiguration(settings: settings)
+        configuration.resolvedFiles = resolvedFiles
         if runPhase == .update {
             // Host-authoritative: the user's reviewed PR fields drive every
             // created PR. Set on BOTH dry-run and armed so the recorded plan
@@ -1314,6 +1599,9 @@ final class AppModel {
         resultsByPhase[runPhase] = outcome.results
         ranScriptByPhase[runPhase] = runScript
         ranParamsByPhase[runPhase] = params
+        // Fresh snapshots were just taken (dry run) or replayed (armed):
+        // re-derive advisory attachment staleness from the current disk state.
+        refreshFileStaleness()
         logs = outcome.logs
         auditEvents = outcome.auditEvents
         // The cumulative trail: boundary event, then the run's events.
@@ -1485,7 +1773,11 @@ final class AppModel {
         job.approvals = approvals
         job.appliedPlans = appliedPlan
         job.promptsByPhase = Self.rawKeyed(promptsByPhase)
+        job.pickedFilesByPhase = Self.rawKeyed(pickedFilePaths)
+        job.fileSnapshotsByPhase = Self.rawKeyed(fileSnapshots)
+        job.recipeId = currentRecipeId
         job.lastRunStatus = statusLine
-        try? store.save(AppStateSnapshot(settings: settings, job: job))
+        try? store.save(AppStateSnapshot(settings: settings, job: job,
+                                         filePickMemory: filePickMemory.isEmpty ? nil : filePickMemory))
     }
 }

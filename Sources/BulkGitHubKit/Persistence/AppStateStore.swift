@@ -5,10 +5,16 @@ import Foundation
 public struct AppStateSnapshot: Codable, Sendable {
     public var settings: AppSettings
     public var job: Job?
+    /// File-param pick memory (recipe id → param key → absolute local path).
+    /// App-level, not job-level: it survives "new job" and never rides in a
+    /// recipe file — a shared recipe always arrives with blank file params.
+    public var filePickMemory: [String: [String: String]]?
 
-    public init(settings: AppSettings = AppSettings(), job: Job? = nil) {
+    public init(settings: AppSettings = AppSettings(), job: Job? = nil,
+                filePickMemory: [String: [String: String]]? = nil) {
         self.settings = settings
         self.job = job
+        self.filePickMemory = filePickMemory
     }
 }
 

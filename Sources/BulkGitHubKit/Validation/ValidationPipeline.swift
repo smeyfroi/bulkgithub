@@ -149,6 +149,18 @@ public final class ValidationPipeline: @unchecked Sendable {
                 }
             }
         }
+        // File params (keys ending in "File") must declare an EMPTY default:
+        // the user picks the actual file in the app, and the picked path never
+        // rides in a script — so a shared recipe cannot arrive pointing at a
+        // path on someone else's machine.
+        for (key, value) in params where FileParams.isFileParam(key: key) && !value.isEmpty {
+            throw ValidationError.metaInvalid(
+                "meta.params.\(key): keys ending in \"File\" are reserved for user-attached "
+                + "files. If \(key) holds a path inside the repository, rename it (e.g. "
+                + "\(key.dropLast(4))Path) and keep its default; if it is a file the user "
+                + "attaches, declare it with an empty default (\"\") and read its content with "
+                + "job.file(\"\(key)\")")
+        }
         let apiVersion = object["apiVersion"] as? Int ?? 1
         let prompt = object["prompt"] as? String
         let icon = object["icon"] as? String

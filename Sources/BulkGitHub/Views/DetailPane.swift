@@ -212,6 +212,7 @@ struct PlanView: View {
 }
 
 struct PlannedActionView: View {
+    @Environment(AppModel.self) private var model
     let action: PlannedAction
 
     var body: some View {
@@ -221,6 +222,14 @@ struct PlannedActionView: View {
 
             switch action {
             case .putContent(_, _, _, let before, let after):
+                // Provenance: content that is byte-identical to an attached
+                // local file gets named — the reviewer should know these
+                // bytes came from outside the repo.
+                if let attachment = model.fileAttachmentLabel(forPlannedContent: after) {
+                    Label(attachment, systemImage: "paperclip")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 DiffView(lines: DiffBuilder.lines(before: before ?? "", after: after))
             case .deleteFile(_, _, _, let before):
                 // A deletion is the file's content going to nothing — every

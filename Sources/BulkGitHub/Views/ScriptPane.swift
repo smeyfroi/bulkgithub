@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import CodeEditor
 import BulkGitHubKit
 
@@ -190,9 +191,15 @@ struct ParamsBar: View {
     }
 
     var body: some View {
+        let fileKeys = model.visibleParamKeys.filter { FileParams.isFileParam(key: $0) }
         let gitKeys = model.visibleParamKeys.filter { Self.gitParamKeys.contains($0) }
-        let otherKeys = model.visibleParamKeys.filter { !Self.gitParamKeys.contains($0) }
+        let otherKeys = model.visibleParamKeys.filter {
+            !Self.gitParamKeys.contains($0) && !FileParams.isFileParam(key: $0)
+        }
         VStack(alignment: .leading, spacing: 8) {
+            if !fileKeys.isEmpty {
+                fileParamGroup(keys: fileKeys)
+            }
             if !otherKeys.isEmpty {
                 paramGroup(title: "Parameters", systemImage: "slider.horizontal.3",
                            caption: "override the script's meta.params defaults on the next run (the script reads job.params; the source is untouched)",
@@ -204,6 +211,32 @@ struct ParamsBar: View {
                            keys: gitKeys)
             }
         }
+    }
+
+    /// The attached-files card: one row per *File param. Required before a
+    /// run, like the PR fields — the picker is the ONLY way to supply a file
+    /// (paths are never typed and never come from a recipe), and the script
+    /// reads the exact bytes via job.file(key) at run time.
+    private func fileParamGroup(keys: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Label("Attached files", systemImage: "paperclip")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("— required: each file's exact bytes are what the run writes (the script reads them as job.file(…); the file name appears in job.params)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .help("These params (names ending in \"File\") take a local file, picked here — never typed, never shipped inside a recipe. A dry run snapshots the content for review; Apply writes exactly the reviewed bytes.")
+
+            ForEach(keys, id: \.self) { key in
+                FileParamRow(key: key)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+        .onAppear { model.refreshFileStaleness() }
     }
 
     private func paramGroup(title: String, systemImage: String,
@@ -291,6 +324,90 @@ struct ParamsBar: View {
             get: { model.paramsDraft[key] ?? "" },
             set: { model.paramsDraft[key] = $0 }
         )
+    }
+}
+
+/// One attached-file row: the param name, a Choose… button (the picker is the
+/// only way in — no free-typed paths), and the picked file as a name chip with
+/// size and a full-path tooltip. Orange warning while unpicked (Run is gated),
+/// inline error when a pick was refused (sensitive location, non-UTF-8,
+/// oversized), and a "changed on disk" note when the local file no longer
+/// matches the reviewed dry-run snapshot.
+struct FileParamRow: View {
+    @Environment(AppModel.self) private var model
+    let key: String
+
+    var body: some View {
+        let path = model.pickedFilePath(for: key)
+        let stale = model.staleFileParamKeys.contains(key)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(key)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button("Choose…") { choose() }
+                    .controlSize(.small)
+                    .help("Pick the local file whose exact content this run uses — it never passes through the model")
+                if let path {
+                    Label {
+                        Text(chipTitle(path: path))
+                    } icon: {
+                        Image(systemName: "doc.text")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(stale ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+                    .help(path)
+                    Button {
+                        model.clearPickedFile(for: key)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Detach this file")
+                } else {
+                    Label("required — attach a file before running",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            if let error = model.filePickErrors[key] {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if stale {
+                Text("the file changed on disk since the dry run — Apply writes the reviewed snapshot; re-run the dry run to pick up the new content")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func chipTitle(path: String) -> String {
+        let name = (path as NSString).lastPathComponent
+        // Only pair the name with a size the snapshot actually describes —
+        // after re-picking a different file the old snapshot's size would lie.
+        if let snapshot = model.fileSnapshot(for: key), snapshot.sourcePath == path {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(snapshot.byteSize),
+                                                 countStyle: .file)
+            return "\(name) (\(size))"
+        }
+        return name
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Attach a text file for \(key) — its exact bytes are what the run writes"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.pickFile(for: key, url: url)
+        }
     }
 }
 

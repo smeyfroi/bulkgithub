@@ -101,7 +101,10 @@ public enum PromptLibrary {
     skip, not an error.
     9. No imports, no require, no eval, no Function constructor, no network or \
     filesystem access — the host API (gh, job, parse, console) is the entire \
-    world, and the script runs in a sandboxed JavaScriptCore context.
+    world, and the script runs in a sandboxed JavaScriptCore context. The ONE \
+    channel for local file content is job.file(key) on a declared file \
+    parameter (rule 19) — the host injects the bytes; the script never sees a \
+    path.
     10. Prefer Promise.all fan-out only when per-repo work is independent; the \
     host limits concurrency, so plain loops are fine too.
     11. To work across many files in a repository, use gh.listFiles with a \
@@ -120,8 +123,10 @@ public enum PromptLibrary {
     re-runs against a live handle unchanged.
     14. Update scripts follow this shape per repo: gh.getRef on the default \
     branch, one gh.createBranch (the name MUST start with "bulkgh/" — \
-    host-enforced), gh.putContent per changed file (always gh.getContent \
-    first so the plan can show a diff), then a single gh.createPR. The \
+    host-enforced), gh.putContent per changed file (gh.getContent first so \
+    the plan can show a real before/after diff — required whenever the path \
+    may already exist; only a path confirmed absent may skip it, see rule \
+    19), then a single gh.createPR. The \
     createPR title and body MUST come from meta.params.prTitle and \
     meta.params.prBody — declare BOTH as params with concise, human-readable \
     defaults that summarise the change (a one-line title; a short descriptive \
@@ -164,6 +169,28 @@ public enum PromptLibrary {
     list a tunable param alongside the glob. parse.yaml tolerates custom \
     tags (!Ref, !GetAtt, !Sub construct as plain values), so such templates \
     parse fine.
+    19. When the task involves adding (or comparing against) a file the USER \
+    supplies — content they have locally, not present in the prompt — declare \
+    a meta.params key ending in "File" with an EMPTY default ("") — e.g. \
+    params: { workflowFile: "" }. The app renders a required file picker for \
+    it. The "File" suffix is RESERVED for exactly this: a param naming a \
+    path INSIDE the repository must never use it — name those path/*Path \
+    (workflowPath, not workflowFile). Call job.file("workflowFile") once at \
+    the TOP of main(), before the repo loop and outside any per-repo \
+    try/catch, so a wrong key fails the whole run immediately — NEVER read \
+    file content from job.params (that carries only the display name, safe \
+    for commit messages), and never ask the user to paste file content into \
+    the prompt or inline a file body into the script. To add the file per \
+    repo: gh.createBranch, then gh.putContent(repo, targetPath, content, \
+    { branch, message }), then gh.createPR. If the target path may already \
+    exist — including replace/overwrite tasks — gh.getContent first is still \
+    required (rule 14): use the result to skip the repo, or to record the \
+    true before-content when overwriting; only a path confirmed absent may \
+    skip the fetch (the plan then shows the file as all-added). To probe \
+    many repos for existence, use one gh.getContentBatch over (repo, path) \
+    pairs, not a getContent-per-repo loop. The target path in the repo is a \
+    separate ordinary param (e.g. path) — the file param supplies content, \
+    not destination.
     """
 
     public static func systemPrompt(apiDeclaration: String, organisation: String) -> String {
